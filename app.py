@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 from pathlib import Path
 
 import folium
@@ -217,36 +218,23 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
     lat, lon = click["lat"], click["lng"]
     result = sample_raster_value(raster_path, lat, lon)
     if "error" not in result:
-        unit = "mg/kg" if medium == "Soil" else "mg/L"
         popup_html = f"""
-        <div style="background: {result['color']}; color: white; padding: 12px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
-            <strong style="font-size: 1.1em;">📍 Location Details</strong><br>
-            <span style="font-size: 0.95em;">Latitude: {lat:.6f}</span><br>
-            <span style="font-size: 0.95em;">Longitude: {lon:.6f}</span><br>
-            <span style="font-size: 0.95em;">Concentration: {result['value']:.3f} {unit}</span><br>
-            <span style="font-size: 0.95em;">Risk Level: {result['risk_label']}</span>
+        <div style="color: black; padding: 0; margin: 0;">
+            <strong style="font-size: 1.1em; color: black;">Risk Level: {result['risk_label']}</strong>
         </div>
         """
-        popup = folium.Popup(popup_html, max_width=300)
-        folium.CircleMarker(
+        # Add Marker with popup - use show=True to auto-open
+        folium.Marker(
             location=[lat, lon],
-            radius=8,
-            color="#152238",
-            weight=2,
-            fill=True,
-            fill_color=result["color"],
-            fill_opacity=0.95,
-            popup=popup,
+            popup=folium.Popup(popup_html, max_width=300, show=True),
+            icon=folium.Icon(color='blue', icon='info-sign')
         ).add_to(m)
     else:
-        popup = folium.Popup(f"<div style='padding: 8px;'>{result['error']}</div>", max_width=250)
-        folium.CircleMarker(
+        popup_html = f"<div style='color: black; padding: 0; margin: 0;'>{result['error']}</div>"
+        folium.Marker(
             location=[lat, lon],
-            radius=6,
-            color="#152238",
-            fill=True,
-            fill_color="#ffffff",
-            popup=popup,
+            popup=folium.Popup(popup_html, max_width=250, show=True),
+            icon=folium.Icon(color='red', icon='exclamation-sign')
         ).add_to(m)
     return result
 
