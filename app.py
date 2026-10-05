@@ -3812,7 +3812,9 @@ def add_map_loading_overlay(
         let mapReady = false;
         let removed = false;
 
-        function allVisibleMapImagesLoaded() {
+        const loaderStartedAt = performance.now();
+
+        function enoughMapContentLoaded() {
             const tileImages = Array.from(
                 mapEl.querySelectorAll("img.leaflet-tile")
             ).filter(function(img) {
@@ -3820,30 +3822,32 @@ def add_map_loading_overlay(
             });
 
             const rasterImg = rasterOverlay ? rasterOverlay._image : null;
-
-            // Do not clear the loader before Leaflet has created visible
-            // basemap tiles. When a prediction raster exists, wait for it too.
-            if (tileImages.length === 0) return false;
-
-            const tilesReady = tileImages.every(function(img) {
-                return img.complete;
-            });
             const rasterReady = rasterOverlay
                 ? !!(rasterImg && rasterImg.complete)
                 : true;
 
-            return tilesReady && rasterReady;
+            // A single slow/off-screen basemap tile should never block the map.
+            // Once the raster is ready, one loaded basemap tile is enough.
+            const oneTileReady = tileImages.some(function(img) {
+                return img.complete && img.naturalWidth > 0;
+            });
+
+            // Fallback avoids an indefinite loader if a tile provider is slow
+            // or unavailable. Leaflet can continue filling tiles afterward.
+            const fallbackReady = (performance.now() - loaderStartedAt) > 900;
+
+            return rasterReady && (oneTileReady || fallbackReady);
         }
 
         function removeLoaderWhenComplete() {
-            if (removed || !mapReady || !allVisibleMapImagesLoaded()) return;
+            if (removed || !mapReady || !enoughMapContentLoaded()) return;
 
             removed = true;
-            loader.style.transition = "opacity 180ms ease";
+            loader.style.transition = "opacity 130ms ease";
             loader.style.opacity = "0";
             setTimeout(function() {
                 if (loader.parentNode) loader.parentNode.removeChild(loader);
-            }, 190);
+            }, 140);
         }
 
         map.whenReady(function() {
@@ -3852,7 +3856,7 @@ def add_map_loading_overlay(
             const readinessTimer = setInterval(function() {
                 removeLoaderWhenComplete();
                 if (removed) clearInterval(readinessTimer);
-            }, 60);
+            }, 40);
 
             // Recheck after tile/raster load events as well, so the loader
             // disappears immediately once the final visible image completes.
@@ -4202,20 +4206,14 @@ def install_mobile_sidebar_toggle() -> None:
             }, 180);
         }
 
+        // No whole-page MutationObserver here. The desktop collapse control
+        // is disabled, so startup and resize checks are sufficient and avoid
+        // reacting to every map tile/Leaflet DOM mutation.
+
         if (win.__kakamegaDesktopSidebarObserver) {
             try { win.__kakamegaDesktopSidebarObserver.disconnect(); } catch (e) {}
+            win.__kakamegaDesktopSidebarObserver = null;
         }
-
-        const desktopObserver = new MutationObserver(function() {
-            requestAnimationFrame(ensureDesktopSidebarExpanded);
-        });
-        desktopObserver.observe(doc.body, {
-            attributes: true,
-            childList: true,
-            subtree: true,
-            attributeFilter: ["class", "style", "aria-expanded"]
-        });
-        win.__kakamegaDesktopSidebarObserver = desktopObserver;
 
         if (win.__kakamegaMobileMenuResize) {
             win.removeEventListener("resize", win.__kakamegaMobileMenuResize);
@@ -4438,9 +4436,10 @@ def install_browser_transition_controller(current_page: str, render_id: int) -> 
                     if (!fd) continue;
                     if (!fd.querySelector('.leaflet-container')) continue;
                     found = true;
+
+                    // The Leaflet iframe owns map readiness. Do not wait twice
+                    // for every network tile here.
                     if (fd.querySelector('.kakamega-map-loader')) return false;
-                    const tiles = Array.from(fd.querySelectorAll('img.leaflet-tile'));
-                    if (tiles.length && !tiles.every(img => img.complete)) return false;
                 }} catch (e) {{
                     found = true;
                 }}
