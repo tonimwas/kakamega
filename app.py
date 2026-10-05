@@ -413,7 +413,7 @@ def add_vector_layers(m: folium.Map) -> None:
     # Add Constituencies layer
     if CONSTITUENCIES_GEOJSON.exists():
         try:
-            constituencies_layer = folium.FeatureGroup(name="Constituencies")
+            constituencies_layer = folium.FeatureGroup(name="Sub-counties")
             folium.GeoJson(
                 str(CONSTITUENCIES_GEOJSON),
                 style_function=lambda x: {
@@ -828,7 +828,7 @@ def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> fol
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr="Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-        name="Esri World Imagery",
+        name="Satellite",
         overlay=False,
         control=True,
         show=True,
@@ -837,7 +837,7 @@ def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> fol
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
         attr="Tiles © Esri — Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, METI, and the GIS User Community",
-        name="Esri World Street Map",
+        name="Roads and places",
         overlay=False,
         control=True,
         show=False,
@@ -1480,7 +1480,7 @@ def page_interactive_map(uploaded_file, medium: str):
         image=_encode_png(soil_rgba),
         bounds=soil_bounds,
         opacity=0.7,
-        name="Predicted soil risk",
+        name="Predicted risk",
         interactive=False,
         cross_origin=False,
         zindex=1,
@@ -1493,7 +1493,7 @@ def page_interactive_map(uploaded_file, medium: str):
         image=_encode_png(water_rgba),
         bounds=water_bounds,
         opacity=0.7,
-        name="Predicted water risk",
+        name="Predicted risk",
         interactive=False,
         cross_origin=False,
         zindex=1,
