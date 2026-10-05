@@ -1698,112 +1698,100 @@ def _rename_and_order_sample_table(df: pd.DataFrame, medium: str) -> pd.DataFram
     return df
 
 
-def page_data_explorer(uploaded_file):
-    st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
-    st.header("Data explorer")
-    st.write("Explore sample observations, metal results and raster metadata.")
-    st.markdown("</div>", unsafe_allow_html=True)
+def page_data_explorer(uploaded_file, medium: str):
+    st.header("Data Explorer")
+    st.write("This table lists the published data behind the model.")
 
-    st.subheader("Sample points")
-    soil_tab, water_tab = st.tabs(["Soil samples", "Water samples"])
+    samples = load_sample_points(
+        str(SOIL_SAMPLE_POINTS if medium == "Soil" else WATER_SAMPLE_POINTS)
+    )
+    sample_table = _rename_and_order_sample_table(samples, medium)
 
-    with soil_tab:
-        soil_samples = load_sample_points(str(SOIL_SAMPLE_POINTS))
-        soil_table = _rename_and_order_sample_table(soil_samples, "Soil")
-        if soil_table.empty:
-            st.info("No soil sample points are available.")
-        else:
-            st.caption(f"{len(soil_table)} soil sample records")
-            st.dataframe(soil_table, use_container_width=True, hide_index=True, height=430)
-
-    with water_tab:
-        water_samples = load_sample_points(str(WATER_SAMPLE_POINTS))
-        water_table = _rename_and_order_sample_table(water_samples, "Water")
-        if water_table.empty:
-            st.info("No water sample points are available.")
-        else:
-            st.caption(f"{len(water_table)} water sample records")
-            st.dataframe(water_table, use_container_width=True, hide_index=True, height=430)
+    if sample_table.empty:
+        st.info(f"No {medium.lower()} sample records are available.")
+    else:
+        expected = 122 if medium == "Soil" else 89
+        st.caption(f"{len(sample_table)} {medium.lower()} sample records (guide total: {expected}).")
+        st.dataframe(
+            sample_table,
+            use_container_width=True,
+            hide_index=True,
+            height=430,
+        )
 
     st.markdown("---")
-    st.subheader("Heavy metal results")
-    soil_metals, water_metals, limits_tab = st.tabs(
-        ["Soil metal results", "Water metal results", "Reference limits"]
+    st.subheader("Metal concentrations")
+
+    metal_table = _metal_table_for_medium(medium)
+    metals = ["Hg", "As", "Pb", "Cd", "Cr", "Cu", "Zn", "Ni"]
+    selected_metal = st.selectbox(
+        "Metal",
+        metals,
+        key=f"metal-select-{medium}",
     )
 
-    with soil_metals:
-        table = load_compressed_csv(str(SOIL_METALS_TABLE))
-        if table.empty:
-            st.info("Soil metal results are not available.")
-        else:
-            table = table.rename(columns={
-                "Hg_mg_kg": "Hg (mg/kg)",
-                "As_mg_kg": "As (mg/kg)",
-                "Pb_mg_kg": "Pb (mg/kg)",
-                "Cd_mg_kg": "Cd (mg/kg)",
-                "Cr_mg_kg": "Cr (mg/kg)",
-                "Cu_mg_kg": "Cu (mg/kg)",
-                "Zn_mg_kg": "Zn (mg/kg)",
-                "Ni_mg_kg": "Ni (mg/kg)",
-                "N_Exceedances": "No. of exceedances",
-                "Overall_class": "Overall class",
-                "Dominant_Metal": "Dominant metal",
-                "Nemerow_PI": "Nemerow PI",
-            })
-            numeric_cols = table.select_dtypes(include="number").columns
-            table[numeric_cols] = table[numeric_cols].round(4)
-            st.caption("Metal concentrations and summary indices. Coordinates are omitted because they are already shown above.")
-            st.dataframe(table, use_container_width=True, hide_index=True, height=430)
+    unit_suffix = "mg_kg" if medium == "Soil" else "mg_L"
+    metal_col = f"{selected_metal}_{unit_suffix}"
 
-    with water_metals:
-        table = load_compressed_csv(str(WATER_METALS_TABLE))
-        if table.empty:
-            st.info("Water metal results are not available.")
-        else:
-            table = table.rename(columns={
-                "Hg_mg_L": "Hg (mg/L)",
-                "As_mg_L": "As (mg/L)",
-                "Pb_mg_L": "Pb (mg/L)",
-                "Cd_mg_L": "Cd (mg/L)",
-                "Cr_mg_L": "Cr (mg/L)",
-                "Cu_mg_L": "Cu (mg/L)",
-                "Zn_mg_L": "Zn (mg/L)",
-                "Ni_mg_L": "Ni (mg/L)",
-                "N_Exceedances": "No. of exceedances",
-                "Overall_class": "Overall class",
-                "Dominant_Metal": "Dominant metal",
-                "Nemerow_PI": "Nemerow PI",
-                "Safety_class": "Safety class",
-            })
-            numeric_cols = table.select_dtypes(include="number").columns
-            table[numeric_cols] = table[numeric_cols].round(5)
-            st.caption("Metal concentrations and summary indices. Repeated coordinates and sample attributes are omitted.")
-            st.dataframe(table, use_container_width=True, hide_index=True, height=430)
+    if metal_table.empty or metal_col not in metal_table.columns:
+        st.info(f"{selected_metal} results are not available for {medium.lower()}.")
+    else:
+        display = metal_table[[
+            col for col in ["ID", metal_col, "Dominant_Metal", "Overall_class", "Safety_class"]
+            if col in metal_table.columns
+        ]].copy()
+        display = display.rename(columns={
+            metal_col: f"{selected_metal} ({'mg/kg' if medium == 'Soil' else 'mg/L'})",
+            "Dominant_Metal": "Dominant metal",
+            "Overall_class": "Overall class",
+            "Safety_class": "Safety class",
+        })
+        display = display.drop_duplicates()
+        value_col = f"{selected_metal} ({'mg/kg' if medium == 'Soil' else 'mg/L'})"
+        display[value_col] = pd.to_numeric(display[value_col], errors="coerce")
+        display[value_col] = display[value_col].round(5 if medium == "Water" else 4)
 
-    with limits_tab:
-        table = load_compressed_csv(str(METAL_LIMITS_TABLE))
-        if table.empty:
-            st.info("Reference metal limits are not available.")
-        else:
-            table = table.rename(columns={
-                "Soil_limit_mg_kg": "Soil limit (mg/kg)",
-                "Water_limit_mg_L": "Water guideline (mg/L)",
-            })
-            st.dataframe(table, use_container_width=True, hide_index=True)
+        finite = display[value_col].dropna()
+        if not finite.empty:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Mean", f"{finite.mean():.4g}")
+            m2.metric("Maximum", f"{finite.max():.4g}")
+            m3.metric("Records", f"{finite.count()}")
+
+        st.dataframe(
+            display,
+            use_container_width=True,
+            hide_index=True,
+            height=330,
+        )
+
+    st.markdown("---")
+    st.subheader("Reference guideline limits")
+    limits = load_compressed_csv(str(METAL_LIMITS_TABLE))
+    if not limits.empty:
+        limit_col = "Soil_limit_mg_kg" if medium == "Soil" else "Water_limit_mg_L"
+        guide_table = limits[["Metal", limit_col]].copy()
+        guide_table = guide_table.rename(columns={
+            limit_col: "CCME soil limit (mg/kg)" if medium == "Soil"
+            else "WHO/NEMA water guideline (mg/L)"
+        })
+        st.dataframe(guide_table, use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.subheader("Raster metadata")
-    medium = st.radio("Raster", ["Soil", "Water"], horizontal=True)
-    raster_path = resolve_raster_path(medium, uploaded_file if medium == "Soil" else None)
+    raster_path = resolve_raster_path(
+        medium,
+        uploaded_file if medium == "Soil" else None,
+    )
     if not raster_path:
         st.warning("Raster data is not available.")
         return
 
-    if medium == "Water":
-        rgba_image, bounds, metadata = prepare_water_overlay(raster_path)
-    else:
-        rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
-
+    rgba_image, bounds, metadata = (
+        prepare_water_overlay(raster_path)
+        if medium == "Water"
+        else prepare_raster_overlay(raster_path)
+    )
     if metadata.get("error"):
         st.error(metadata["error"])
         return
