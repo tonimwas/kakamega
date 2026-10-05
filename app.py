@@ -1856,18 +1856,24 @@ def page_interactive_map(uploaded_file, medium: str):
         f"Loading {medium.lower()} map",
     )
 
-    st.markdown('<div class="map-shell">', unsafe_allow_html=True)
-    st_folium(
-        m,
-        width="stretch",
-        height=600,
-        returned_objects=[],
-        key="kakamega-map",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
     if loading_placeholder is not None:
         loading_placeholder.empty()
+        with loading_placeholder.container():
+            st_folium(
+                m,
+                width="stretch",
+                height=600,
+                returned_objects=[],
+                key="kakamega-map",
+            )
+    else:
+        st_folium(
+            m,
+            width="stretch",
+            height=600,
+            returned_objects=[],
+            key="kakamega-map",
+        )
     st.caption(
         f"{medium} is selected. Use the sample-points eye control to view "
         f"{medium.lower()} sample points, then click a point to see its measured metals, class and advice."
@@ -2238,16 +2244,24 @@ def page_check_location(uploaded_file, medium: str):
         f"Loading {medium.lower()} location map",
     )
 
-    st_folium(
-        m,
-        width="stretch",
-        height=470,
-        returned_objects=[],
-        key="check-location",
-    )
-
     if loading_placeholder is not None:
         loading_placeholder.empty()
+        with loading_placeholder.container():
+            st_folium(
+                m,
+                width="stretch",
+                height=470,
+                returned_objects=[],
+                key="check-location",
+            )
+    else:
+        st_folium(
+            m,
+            width="stretch",
+            height=470,
+            returned_objects=[],
+            key="check-location",
+        )
 
 
 @st.cache_data(show_spinner=False)
@@ -2708,7 +2722,14 @@ def page_about():
         "Loading study area map",
     )
     loading_placeholder.empty()
-    st_folium(m, width="stretch", height=360, returned_objects=[], key="about-study-area")
+    with loading_placeholder.container():
+        st_folium(
+            m,
+            width="stretch",
+            height=360,
+            returned_objects=[],
+            key="about-study-area",
+        )
 
 def page_statistics(medium: str):
     st.markdown(
