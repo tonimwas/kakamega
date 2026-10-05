@@ -104,17 +104,49 @@ st.markdown("""
         margin-bottom: 0.1rem !important;
     }
 
-    /* Keep the expanded Leaflet layer control beside the zoom buttons. */
-    .leaflet-top.leaflet-left .leaflet-control-layers {
-        position: absolute !important;
-        left: 44px !important;
-        top: 0 !important;
-        margin: 10px 0 0 0 !important;
-        min-width: 185px;
-        max-height: 220px;
-        overflow-y: auto;
-        background: rgba(255,255,255,0.94);
-        z-index: 1200 !important;
+    /* Compact, permanently expanded layer control in the top-right. */
+    .leaflet-top.leaflet-right .leaflet-control-layers {
+        margin-top: 48px !important;
+        margin-right: 10px !important;
+        min-width: 132px !important;
+        max-width: 165px !important;
+        max-height: 190px !important;
+        overflow-y: auto !important;
+        padding: 4px 6px !important;
+        background: rgba(255,255,255,0.50) !important;
+        border: 1px solid rgba(255,255,255,0.45) !important;
+        border-radius: 5px !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.20) !important;
+        backdrop-filter: blur(1px);
+    }
+
+    .leaflet-control-layers-expanded {
+        padding: 4px 6px !important;
+    }
+
+    .leaflet-control-layers label {
+        margin: 1px 0 !important;
+        line-height: 1.12 !important;
+        font-size: 10px !important;
+        font-weight: 700 !important;
+        color: #111 !important;
+        white-space: nowrap !important;
+    }
+
+    .leaflet-control-layers-selector {
+        width: 11px !important;
+        height: 11px !important;
+        margin: 0 3px 0 0 !important;
+        vertical-align: middle !important;
+    }
+
+    .leaflet-control-layers-separator {
+        margin: 3px 0 !important;
+        border-top: 1px solid rgba(0,0,0,0.28) !important;
+    }
+
+    .leaflet-control-layers-list {
+        margin: 0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1383,7 +1415,7 @@ def page_interactive_map(uploaded_file):
         water_sample_layer,
     )
 
-    folium.LayerControl(collapsed=False, position="topleft").add_to(m)
+    folium.LayerControl(collapsed=False, position="topright").add_to(m)
 
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
