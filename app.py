@@ -668,7 +668,7 @@ def add_leaflet_internal_css(m: folium.Map) -> None:
         margin: 0 !important;
         padding: 0 !important;
         line-height: 1.02 !important;
-        font-size: 8px !important;
+        font-size: 10px !important;
         font-weight: 700 !important;
         color: #ffffff !important;
         white-space: nowrap !important;
