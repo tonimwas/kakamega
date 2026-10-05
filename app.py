@@ -1796,6 +1796,13 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
 
 
 def page_interactive_map(uploaded_file, medium: str):
+    loading_placeholder = None
+    if st.session_state.pop("medium_switch_loading", False):
+        loading_placeholder = map_loading_placeholder(
+            600,
+            f"Loading {medium.lower()} map",
+        )
+
     raster_path = resolve_raster_path(
         medium,
         uploaded_file if medium == "Soil" else None,
@@ -1849,6 +1856,9 @@ def page_interactive_map(uploaded_file, medium: str):
         overlay,
         f"Loading {medium.lower()} map",
     )
+
+    if loading_placeholder is not None:
+        loading_placeholder.empty()
 
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
@@ -2178,6 +2188,13 @@ def page_check_location(uploaded_file, medium: str):
         "before farming, drawing water or managing mine waste."
     )
 
+    loading_placeholder = None
+    if st.session_state.pop("medium_switch_loading", False):
+        loading_placeholder = map_loading_placeholder(
+            470,
+            f"Loading {medium.lower()} location map",
+        )
+
     raster_path = resolve_raster_path(
         medium,
         uploaded_file if medium == "Soil" else None,
@@ -2222,6 +2239,9 @@ def page_check_location(uploaded_file, medium: str):
         overlay,
         f"Loading {medium.lower()} location map",
     )
+
+    if loading_placeholder is not None:
+        loading_placeholder.empty()
 
     st_folium(
         m,
@@ -2680,10 +2700,47 @@ def page_about():
     center_lon = (county_bounds[0][1] + county_bounds[1][1]) / 2
     m = create_base_map(center_lat, center_lon, zoom=9)
     m.fit_bounds(county_bounds)
+    add_map_loading_overlay(
+        m,
+        None,
+        "Loading study area map",
+    )
     st_folium(m, width="stretch", height=360, returned_objects=[], key="about-study-area")
 
 def page_statistics(medium: str):
-    st.header("Key Statistics")
+    st.markdown(
+        """
+        <style>
+        .stats-title {
+            font-size: 1.45rem;
+            font-weight: 700;
+            margin: 0 0 0.35rem 0;
+        }
+        .stats-card {
+            background: #171a21;
+            border: 1px solid #2d3039;
+            border-radius: 6px;
+            padding: 0.38rem 0.42rem;
+            min-height: 54px;
+        }
+        .stats-card-label {
+            color: #aeb2ba;
+            font-size: 0.68rem;
+            font-weight: 600;
+            line-height: 1.05;
+            margin-bottom: 0.12rem;
+        }
+        .stats-card-value {
+            color: #ffffff;
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1.05;
+        }
+        </style>
+        <div class="stats-title">Key Statistics</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if medium == "Soil":
         values = [
@@ -2694,25 +2751,41 @@ def page_statistics(medium: str):
             ("Accuracy", "76.2%"),
             ("Macro F1", "0.57"),
         ]
-        cols = st.columns(3)
-        for i, (label, value) in enumerate(values):
-            cols[i % 3].metric(label, value)
-        if SOIL_CLASS_CHART.exists():
-            st.image(str(SOIL_CLASS_CHART), caption="Soil samples per contamination class", use_container_width=True)
+        chart_path = SOIL_CLASS_CHART
+        chart_caption = "Soil samples per contamination class"
     else:
         values = [
-            ("Samples evaluated", "89"),
+            ("Samples", "89"),
             ("Metals", "8"),
             ("Classes", "2"),
             ("Model", "Random Forest"),
             ("Accuracy", "79.8%"),
             ("Macro F1", "0.77"),
         ]
-        cols = st.columns(3)
-        for i, (label, value) in enumerate(values):
-            cols[i % 3].metric(label, value)
-        if WATER_CLASS_CHART.exists():
-            st.image(str(WATER_CLASS_CHART), caption="Water samples per class", use_container_width=True)
+        chart_path = WATER_CLASS_CHART
+        chart_caption = "Water samples per class"
+
+    cols = st.columns(6, gap="small")
+    for col, (label, value) in zip(cols, values):
+        with col:
+            st.markdown(
+                f"""
+                <div class="stats-card">
+                    <div class="stats-card-label">{label}</div>
+                    <div class="stats-card-value">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    if chart_path.exists():
+        left, center, right = st.columns([1, 1.35, 1])
+        with center:
+            st.image(
+                str(chart_path),
+                width=390,
+                caption=chart_caption,
+            )
 
 def page_disclaimer():
     st.header("Disclaimer")
@@ -2739,7 +2812,7 @@ def page_disclaimer():
 
 def add_map_loading_overlay(
     m: folium.Map,
-    raster_overlay: ImageOverlay,
+    raster_overlay,
     label: str,
 ) -> None:
     """Keep a centered loader over the Leaflet map until visible tiles and raster finish loading."""
@@ -2798,16 +2871,18 @@ def add_map_loading_overlay(
                 return img.style.display !== "none";
             });
 
-            const rasterImg = rasterOverlay._image;
+            const rasterImg = rasterOverlay ? rasterOverlay._image : null;
 
-            // Do not clear the loader before Leaflet has created its visible
-            // basemap tiles and the prediction image.
-            if (tileImages.length === 0 || !rasterImg) return false;
+            // Do not clear the loader before Leaflet has created visible
+            // basemap tiles. When a prediction raster exists, wait for it too.
+            if (tileImages.length === 0) return false;
 
             const tilesReady = tileImages.every(function(img) {
                 return img.complete;
             });
-            const rasterReady = rasterImg.complete;
+            const rasterReady = rasterOverlay
+                ? !!(rasterImg && rasterImg.complete)
+                : true;
 
             return tilesReady && rasterReady;
         }
@@ -2838,7 +2913,9 @@ def add_map_loading_overlay(
                     layer.on("load", removeLoaderWhenComplete);
                 }
             });
-            rasterOverlay.on("load", removeLoaderWhenComplete);
+            if (rasterOverlay) {
+                rasterOverlay.on("load", removeLoaderWhenComplete);
+            }
 
             requestAnimationFrame(removeLoaderWhenComplete);
         });
@@ -2846,13 +2923,41 @@ def add_map_loading_overlay(
     {% endmacro %}
     """
 
-    template = template.replace("__RASTER_OVERLAY__", raster_overlay.get_name())
+    template = template.replace(
+        "__RASTER_OVERLAY__",
+        raster_overlay.get_name() if raster_overlay is not None else "null",
+    )
     template = template.replace("__LABEL__", label.replace('"', '\"'))
 
     control = MacroElement()
     control._name = "MapLoadingOverlay"
     control._template = Template(template)
     m.add_child(control)
+
+
+def map_loading_placeholder(height: int, text: str):
+    placeholder = st.empty()
+    placeholder.markdown(
+        f"""
+        <div style="
+            height:{height}px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            border-radius:8px;
+            background:#11151b;
+            border:1px solid #2d3039;
+        ">
+            {wave_loader_html(text)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return placeholder
+
+
+def mark_medium_loading() -> None:
+    st.session_state["medium_switch_loading"] = True
 
 
 def wave_loader_html(text: str = "Loading map") -> str:
@@ -2954,6 +3059,7 @@ def main():
             horizontal=True,
             label_visibility="collapsed",
             key="active_medium",
+            on_change=mark_medium_loading,
         )
 
         if medium == "Soil":
