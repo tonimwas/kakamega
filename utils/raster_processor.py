@@ -254,6 +254,88 @@ def prepare_raster_overlay(
         return None, None, {"error": str(exc)}
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def prepare_water_overlay(
+    raster_path: str,
+    max_dim: int = 800,
+) -> Tuple[Optional[np.ndarray], Optional[list], Dict[str, Any]]:
+    """Render the water raster with the fixed two-class Safe/Unsafe palette."""
+    try:
+        with rasterio.open(raster_path) as src:
+            metadata = {
+                "crs": str(src.crs),
+                "nodata": src.nodata,
+                "width": src.width,
+                "height": src.height,
+                "bounds": {
+                    "left": float(src.bounds.left),
+                    "bottom": float(src.bounds.bottom),
+                    "right": float(src.bounds.right),
+                    "top": float(src.bounds.top),
+                },
+                "media": Path(raster_path).stem,
+                "palette": "water_safe_blue_unsafe_yellow_v4",
+                "tags": dict(src.tags()),
+            }
+            if src.crs is None:
+                metadata["error"] = "Raster has no CRS defined"
+                return None, None, metadata
+
+            band = src.read(1)
+            src_crs = CRS.from_user_input(src.crs)
+            src_transform = src.transform
+            src_bounds = src.bounds
+            nodata = src.nodata
+            src_width, src_height = src.width, src.height
+
+        if src_crs == TARGET_CRS:
+            bounds = [[src_bounds.bottom, src_bounds.left], [src_bounds.top, src_bounds.right]]
+            rgba_image = apply_color_classification(band, nodata, water=True)
+            metadata["overlay_width"] = src_width
+            metadata["overlay_height"] = src_height
+            return rgba_image, bounds, metadata
+
+        transform, width, height = calculate_default_transform(
+            src_crs, TARGET_CRS, src_width, src_height, *src_bounds
+        )
+        if max(width, height) > max_dim:
+            scale = max_dim / float(max(width, height))
+            width = max(1, int(width * scale))
+            height = max(1, int(height * scale))
+            transform, width, height = calculate_default_transform(
+                src_crs,
+                TARGET_CRS,
+                src_width,
+                src_height,
+                *src_bounds,
+                dst_width=width,
+                dst_height=height,
+            )
+
+        reprojected = np.zeros((height, width), dtype=np.float32)
+        reproject(
+            source=band.astype("float32"),
+            destination=reprojected,
+            src_transform=src_transform,
+            src_crs=src_crs,
+            dst_transform=transform,
+            dst_crs=TARGET_CRS,
+            src_nodata=nodata,
+            dst_nodata=np.nan,
+            resampling=Resampling.nearest,
+        )
+
+        left, bottom, right, top = array_bounds(height, width, transform)
+        bounds = [[float(bottom), float(left)], [float(top), float(right)]]
+        rgba_image = apply_color_classification(reprojected, nodata=np.nan, water=True)
+        metadata["overlay_width"] = width
+        metadata["overlay_height"] = height
+        metadata["wgs84_bounds"] = bounds
+        return rgba_image, bounds, metadata
+    except Exception as exc:
+        return None, None, {"error": str(exc)}
+
+
 def sample_raster_value(raster_path: str, lat: float, lon: float) -> Dict[str, Any]:
     """Sample native-CRS pixel value at a WGS84 click location."""
     try:
