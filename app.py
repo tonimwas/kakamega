@@ -1419,28 +1419,13 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
     return result
 
 
-def page_interactive_map(uploaded_file):
-    st.markdown(
-        """
-        <div class="hero" style="padding: 0.3rem 0;">
-            <h1 style="font-size: 1.3rem; margin: 0.2rem 0;">Predicting heavy metal contamination around artisanal gold mines in Kakamega County</h1>
-            <p style="font-size: 0.85rem; margin: 0;">An interactive machine learning map showing predicted soil contamination and water safety across Kakamega County, Kenya.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+def page_interactive_map(uploaded_file, medium: str):
     soil_path = str(SOIL_RASTER) if SOIL_RASTER.exists() else None
     water_path = str(WATER_RASTER) if WATER_RASTER.exists() else None
 
     if soil_path is None or water_path is None:
         st.error("Both soil and water raster files are required in data/Raster.")
         return
-
-    try:
-        center_lat, center_lon = raster_map_center(soil_path)
-    except Exception:
-        center_lat, center_lon = 0.28, 34.75
 
     soil_rgba, soil_bounds, soil_meta = prepare_raster_overlay(soil_path)
     water_rgba, water_bounds, water_meta = prepare_water_overlay(water_path)
@@ -1461,11 +1446,12 @@ def page_interactive_map(uploaded_file):
         image=_encode_png(soil_rgba),
         bounds=soil_bounds,
         opacity=0.7,
-        name="Soil contamination risk",
+        name="Predicted soil risk",
         interactive=False,
         cross_origin=False,
         zindex=1,
-        show=True,
+        show=(medium == "Soil"),
+        control=(medium == "Soil"),
     )
     soil_overlay.add_to(m)
 
@@ -1473,11 +1459,12 @@ def page_interactive_map(uploaded_file):
         image=_encode_png(water_rgba),
         bounds=water_bounds,
         opacity=0.7,
-        name="Water safety",
+        name="Predicted water risk",
         interactive=False,
         cross_origin=False,
         zindex=1,
-        show=False,
+        show=(medium == "Water"),
+        control=(medium == "Water"),
     )
     water_overlay.add_to(m)
 
@@ -1496,6 +1483,7 @@ def page_interactive_map(uploaded_file):
         county_bounds,
         soil_sample_layer,
         water_sample_layer,
+        initial_medium=medium,
     )
 
     folium.LayerControl(collapsed=False, position="topright").add_to(m)
@@ -1507,9 +1495,13 @@ def page_interactive_map(uploaded_file):
         width="stretch",
         height=600,
         returned_objects=[],
-        key="kakamega-map",
+        key=f"kakamega-map-{medium.lower()}",
     )
     st.markdown("</div>", unsafe_allow_html=True)
+    st.caption(
+        "Choose Soil or Water in the sidebar to change the layer. "
+        "Use the sample-points eye control, then click a point to see its metal concentrations, class and advice."
+    )
 
 
 def page_check_location(uploaded_file):
