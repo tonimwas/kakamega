@@ -2,12 +2,14 @@ import base64
 import gzip
 import io
 import json
+import math
 import struct
 from pathlib import Path
 
 import folium
 import geopandas as gpd
 import pandas as pd
+import joblib
 from branca.element import MacroElement, Template
 import streamlit as st
 from folium.plugins import Fullscreen, LocateControl, MousePosition
@@ -45,6 +47,13 @@ TABLE_DIR = ROOT / "data" / "tables"
 SOIL_METALS_TABLE = TABLE_DIR / "dominant_metals_soil.csv.gz.b64"
 WATER_METALS_TABLE = TABLE_DIR / "dominant_metals_water.csv.gz.b64"
 METAL_LIMITS_TABLE = TABLE_DIR / "metal_limits.csv.gz.b64"
+ADDITIONAL_DIR = ROOT / "data" / "additional_data"
+SOIL_CONFUSION_IMAGE = ADDITIONAL_DIR / "WhatsApp Image 2026-10-04 at 1.29.10 AM.jpeg"
+WATER_CONFUSION_IMAGE = ADDITIONAL_DIR / "WhatsApp Image 2026-10-04 at 1.28.47 AM.jpeg"
+SOIL_CLASS_CHART = ADDITIONAL_DIR / "WhatsApp Image 2026-10-04 at 1.28.47 AM (1).jpeg"
+WATER_CLASS_CHART = ADDITIONAL_DIR / "WhatsApp Image 2026-10-04 at 1.28.47 AM (2).jpeg"
+WATER_RF_MODEL = ADDITIONAL_DIR / "water_contamination_rf_model.pkl"
+WATER_FEATURE_META = ADDITIONAL_DIR / "water_contamination_features.pkl"
 
 st.set_page_config(
     page_title="Kakamega Heavy Metal Risk Assessment",
@@ -332,6 +341,7 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds, medium: str) -> 
         "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
         "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
         "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
+        "__INITIAL_MEDIUM__": json.dumps(initial_medium),
         "__STATUS_LABEL__": json.dumps("Water safety" if medium == "Water" else "Contamination"),
         "__CLASS_DEFINITIONS__": json.dumps(
             [
@@ -560,10 +570,71 @@ def _soil_sample_color(value) -> str:
 def _water_sample_color(value) -> str:
     text = str(value or "").strip().lower()
     if text == "safe":
-        return "#2196F3"
+        return "#4CAF50"
     if text == "unsafe":
-        return "#FFEB3B"
+        return "#F44336"
     return "#9E9E9E"
+
+
+def class_advice(medium: str, class_label: str) -> str:
+    label = str(class_label or "").strip().lower()
+    if medium == "Water":
+        if "unsafe" in label:
+            return "At least one tested metal is predicted to exceed WHO drinking-water guidelines. Do not drink untreated; have the water tested."
+        return "No tested metal is predicted to exceed WHO guidelines."
+
+    if "heavy" in label:
+        return "High contamination is likely. Avoid growing food crops here and have the soil tested before use."
+    if "moderate" in label:
+        return "Some contamination is likely. Test the soil before growing food crops."
+    if "slight" in label:
+        return "Slight contamination is possible. Wash produce well and test the soil before farming."
+    return "No contamination is predicted, the soil is safe to grow food crops."
+
+
+def _metal_table_for_medium(medium: str) -> pd.DataFrame:
+    path = SOIL_METALS_TABLE if medium == "Soil" else WATER_METALS_TABLE
+    return load_compressed_csv(str(path))
+
+
+def sample_dominant_metals(sample_id: str, medium: str) -> str:
+    table = _metal_table_for_medium(medium)
+    if table.empty or "ID" not in table.columns or "Dominant_Metal" not in table.columns:
+        return "Not available"
+    rows = table[table["ID"].astype(str) == str(sample_id)]
+    metals = [m for m in rows["Dominant_Metal"].dropna().astype(str).unique() if m.strip()]
+    return ", ".join(metals[:3]) if metals else "Not available"
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0088
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def nearest_sample_context(lat: float, lon: float, medium: str) -> dict:
+    path = SOIL_SAMPLE_POINTS if medium == "Soil" else WATER_SAMPLE_POINTS
+    gdf = load_sample_points(str(path))
+    if gdf.empty:
+        return {"distance_km": None, "sample_id": None, "dominant_metals": "Not available"}
+
+    best = None
+    for _, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        d = _haversine_km(lat, lon, float(geom.y), float(geom.x))
+        if best is None or d < best["distance_km"]:
+            sid = str(row.get("ID", ""))
+            best = {
+                "distance_km": d,
+                "sample_id": sid,
+                "dominant_metals": sample_dominant_metals(sid, medium),
+            }
+    return best or {"distance_km": None, "sample_id": None, "dominant_metals": "Not available"}
 
 
 def add_sample_point_layers(m: folium.Map):
@@ -795,6 +866,7 @@ def add_interactive_medium_controls(
     county_bounds,
     soil_sample_layer,
     water_sample_layer,
+    initial_medium: str = "Soil",
 ) -> None:
     """Switch Soil/Water, identify pixels, center, and change opacity fully in Leaflet."""
     county_data = _admin_lookup_geojson(
@@ -846,8 +918,8 @@ def add_interactive_medium_controls(
             {rgb: [244, 67, 54], label: "Heavy contamination"}
         ];
         const waterClasses = [
-            {rgb: [33, 150, 243], label: "Safe"},
-            {rgb: [255, 235, 59], label: "Unsafe"}
+            {rgb: [76, 175, 80], label: "Safe"},
+            {rgb: [244, 67, 54], label: "Unsafe"}
         ];
 
         let activeMedium = "Soil";
@@ -954,8 +1026,8 @@ def add_interactive_medium_controls(
             if (activeMedium === "Water") {
                 div.innerHTML =
                     '<div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">Water safety</div>' +
-                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#2196F3;border:1px solid #333;margin-right:6px;"></span>Safe</div>' +
-                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Unsafe</div>';
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Safe</div>' +
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#F44336;border:1px solid #333;margin-right:6px;"></span>Unsafe</div>';
             } else {
                 div.innerHTML =
                     '<div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">Contamination risk</div>' +
@@ -1017,34 +1089,6 @@ def add_interactive_medium_controls(
             updateSampleToggle();
             map.closePopup();
         }
-
-        const MediumControl = L.Control.extend({
-            options: {position: "topleft"},
-            onAdd: function() {
-                const container = L.DomUtil.create("div", "leaflet-bar");
-                container.style.display = "flex";
-                container.style.marginTop = "8px";
-                ["Soil", "Water"].forEach(name => {
-                    const btn = L.DomUtil.create("a", "kakamega-medium-btn", container);
-                    btn.href = "#";
-                    btn.dataset.medium = name;
-                    btn.innerHTML = name;
-                    btn.style.width = "54px";
-                    btn.style.height = "30px";
-                    btn.style.lineHeight = "30px";
-                    btn.style.textAlign = "center";
-                    btn.style.fontSize = "12px";
-                    btn.style.fontWeight = "600";
-                    L.DomEvent.on(btn, "click", function(e) {
-                        L.DomEvent.preventDefault(e);
-                        setMedium(name);
-                    });
-                });
-                L.DomEvent.disableClickPropagation(container);
-                return container;
-            }
-        });
-        map.addControl(new MediumControl());
 
         const SampleToggleControl = L.Control.extend({
             options: {position: "topleft"},
@@ -1198,7 +1242,7 @@ def add_interactive_medium_controls(
                 .openOn(map);
         });
 
-        setMedium("Soil");
+        setMedium(__INITIAL_MEDIUM__);
     })();
     {% endmacro %}
     """
@@ -1238,8 +1282,8 @@ def add_interactive_medium_controls(
 def add_map_legend(m: folium.Map, medium: str = "Soil") -> None:
     if medium == "Water":
         legend_items = """
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#2196F3;border:1px solid #333;margin-right:6px;"></span>Safe</div>
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Unsafe</div>
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Safe</div>
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#F44336;border:1px solid #333;margin-right:6px;"></span>Unsafe</div>
         """
         legend_title = "Water safety"
     else:
