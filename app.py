@@ -9,6 +9,7 @@ import streamlit as st
 from folium.plugins import Fullscreen, LocateControl, MousePosition
 from folium.raster_layers import ImageOverlay
 from PIL import Image
+from shapely.geometry import Point
 from streamlit_folium import st_folium
 
 from utils.raster_processor import (
@@ -279,13 +280,81 @@ def add_map_legend(m: folium.Map) -> None:
     m.get_root().html.add_child(folium.Element(legend))
 
 
+def get_admin_info(lat: float, lon: float) -> dict:
+    """Get administrative information (county, constituency, ward) for a point."""
+    admin_info = {
+        'county': None,
+        'constituency': None,
+        'ward': None
+    }
+
+    point = Point(lon, lat)
+
+    # Check county
+    if COUNTY_GEOJSON.exists():
+        try:
+            county_gdf = gpd.read_file(COUNTY_GEOJSON)
+            if county_gdf.crs != 'EPSG:4326':
+                county_gdf = county_gdf.to_crs('EPSG:4326')
+            for idx, row in county_gdf.iterrows():
+                if row.geometry.contains(point):
+                    admin_info['county'] = row.get('ADM1_EN', 'Kakamega')
+                    break
+        except Exception:
+            pass
+
+    # Check constituency
+    if CONSTITUENCIES_GEOJSON.exists():
+        try:
+            const_gdf = gpd.read_file(CONSTITUENCIES_GEOJSON)
+            if const_gdf.crs != 'EPSG:4326':
+                const_gdf = const_gdf.to_crs('EPSG:4326')
+            for idx, row in const_gdf.iterrows():
+                if row.geometry.contains(point):
+                    admin_info['constituency'] = row.get('ADM2_EN', 'Unknown')
+                    break
+        except Exception:
+            pass
+
+    # Check ward
+    if WARDS_GEOJSON.exists():
+        try:
+            ward_gdf = gpd.read_file(WARDS_GEOJSON)
+            if ward_gdf.crs != 'EPSG:4326':
+                ward_gdf = ward_gdf.to_crs('EPSG:4326')
+            for idx, row in ward_gdf.iterrows():
+                if row.geometry.contains(point):
+                    admin_info['ward'] = row.get('ward', 'Unknown')
+                    break
+        except Exception:
+            pass
+
+    return admin_info
+
+
 def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: str):
     lat, lon = click["lat"], click["lng"]
     result = sample_raster_value(raster_path, lat, lon)
+
+    # Get administrative information
+    admin_info = get_admin_info(lat, lon)
+
     if "error" not in result:
+        # Build popup HTML with admin info
+        popup_parts = [
+            f"<strong style='font-size: 12px; color: black;'>Contamination: {result['risk_label']}</strong>",
+        ]
+
+        if admin_info['county']:
+            popup_parts.append(f"<div style='font-size: 12px;'><strong>County:</strong> {admin_info['county']}</div>")
+        if admin_info['constituency']:
+            popup_parts.append(f"<div style='font-size: 12px;'><strong>Constituency:</strong> {admin_info['constituency']}</div>")
+        if admin_info['ward']:
+            popup_parts.append(f"<div style='font-size: 12px;'><strong>Ward:</strong> {admin_info['ward']}</div>")
+
         popup_html = f"""
-        <div style="color: black; padding: 0; margin: 0;">
-            <strong style="font-size: 1.1em; color: black;">Risk Level: {result['risk_label']}</strong>
+        <div style="color: black; padding: 5px; margin: 0; font-size: 12px;">
+            {'<br>'.join(popup_parts)}
         </div>
         """
         # Add Marker with popup - use show=True to auto-open
@@ -295,7 +364,24 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
             icon=folium.Icon(color='blue', icon='info-sign')
         ).add_to(m)
     else:
-        popup_html = f"<div style='color: black; padding: 0; margin: 0;'>{result['error']}</div>"
+        # Outside raster area - show near Kakamega County info
+        popup_parts = [
+            f"<strong style='font-size: 12px; color: black;'>Near Kakamega County</strong>",
+            f"<div style='font-size: 12px;'><strong>Contamination:</strong> {result.get('risk_label', 'Unknown')}</div>",
+        ]
+
+        if admin_info['county']:
+            popup_parts.append(f"<div style='font-size: 12px;'><strong>County:</strong> {admin_info['county']}</div>")
+        if admin_info['constituency']:
+            popup_parts.append(f"<div style='font-size: 12px;'><strong>Constituency:</strong> {admin_info['constituency']}</div>")
+        if admin_info['ward']:
+            popup_parts.append(f"<div style='font-size: 12px;'><strong>Ward:</strong> {admin_info['ward']}</div>")
+
+        popup_html = f"""
+        <div style="color: black; padding: 5px; margin: 0; font-size: 12px;">
+            {'<br>'.join(popup_parts)}
+        </div>
+        """
         folium.Marker(
             location=[lat, lon],
             popup=folium.Popup(popup_html, max_width=250, show=True),
