@@ -3240,7 +3240,7 @@ def add_map_loading_overlay(
 
 
 def install_mobile_sidebar_toggle() -> None:
-    """Keep a small mobile hamburger visible so a collapsed sidebar can be reopened."""
+    """Keep a working mobile hamburger visible so a collapsed sidebar can be reopened."""
     html = """
     <script>
     (function() {
@@ -3255,11 +3255,13 @@ def install_mobile_sidebar_toggle() -> None:
                 '#kakamega-mobile-menu-btn{' +
                 'position:fixed;left:10px;top:10px;z-index:2147482500;' +
                 'width:36px;height:36px;border:1px solid rgba(255,255,255,.22);' +
-                'border-radius:7px;background:rgba(14,17,23,.88);color:#fff;' +
+                'border-radius:7px;background:rgba(14,17,23,.9);color:#fff;' +
                 'display:none;align-items:center;justify-content:center;' +
-                'font-size:20px;line-height:1;cursor:pointer;' +
+                'font-size:20px;line-height:1;cursor:pointer;touch-action:manipulation;' +
                 'box-shadow:0 2px 8px rgba(0,0,0,.28);backdrop-filter:blur(3px);' +
+                '-webkit-tap-highlight-color:transparent;' +
                 '}' +
+                '#kakamega-mobile-menu-btn:active{transform:scale(.96);}' +
                 '@media (max-width: 768px){#kakamega-mobile-menu-btn{display:flex;}}';
             doc.head.appendChild(style);
         }
@@ -3275,40 +3277,101 @@ def install_mobile_sidebar_toggle() -> None:
             const cs = win.getComputedStyle(sb);
             return (
                 r.width > 80 &&
-                r.right > 0 &&
+                r.right > 4 &&
                 cs.visibility !== 'hidden' &&
-                cs.display !== 'none'
+                cs.display !== 'none' &&
+                cs.opacity !== '0'
+            );
+        }
+
+        function collapsedControl() {
+            return (
+                doc.querySelector('[data-testid="stSidebarCollapsedControl"] button') ||
+                doc.querySelector('[data-testid="stSidebarCollapsedControl"]') ||
+                doc.querySelector('[data-testid*="SidebarCollapsed"] button') ||
+                doc.querySelector('[data-testid*="SidebarCollapsed"]')
             );
         }
 
         function nativeOpenButton() {
+            const direct = collapsedControl();
+            if (direct) return direct;
+
             const candidates = Array.from(doc.querySelectorAll('button'));
             return candidates.find(function(btn) {
                 const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
                 const title = (btn.getAttribute('title') || '').toLowerCase();
+                const testid = (btn.getAttribute('data-testid') || '').toLowerCase();
                 const text = (btn.innerText || '').trim().toLowerCase();
                 return (
+                    aria.includes('open sidebar') ||
+                    aria.includes('expand sidebar') ||
                     aria.includes('sidebar') ||
+                    title.includes('open sidebar') ||
+                    title.includes('expand sidebar') ||
                     title.includes('sidebar') ||
+                    testid.includes('sidebar') ||
                     text === '☰'
                 );
             }) || null;
         }
 
-        function nativeCloseButton() {
+        function clickNativeOpenControl() {
+            const control = nativeOpenButton();
+            if (!control) return false;
+
+            const clickable =
+                control.matches && control.matches('button')
+                    ? control
+                    : control.querySelector && control.querySelector('button')
+                        ? control.querySelector('button')
+                        : control;
+
+            try {
+                clickable.dispatchEvent(new PointerEvent('pointerdown', {
+                    bubbles: true,
+                    cancelable: true,
+                    pointerType: 'touch'
+                }));
+            } catch (e) {}
+
+            try {
+                clickable.dispatchEvent(new MouseEvent('mousedown', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: win
+                }));
+                clickable.dispatchEvent(new MouseEvent('mouseup', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: win
+                }));
+                clickable.click();
+            } catch (e) {
+                try { clickable.click(); } catch (_) {}
+            }
+
+            return true;
+        }
+
+        function forceSidebarVisible() {
             const sb = sidebar();
-            if (!sb) return null;
-            const candidates = Array.from(sb.querySelectorAll('button'));
-            return candidates.find(function(btn) {
-                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                const title = (btn.getAttribute('title') || '').toLowerCase();
-                return (
-                    aria.includes('close') ||
-                    aria.includes('collapse') ||
-                    title.includes('close') ||
-                    title.includes('collapse')
-                );
-            }) || null;
+            if (!sb) return false;
+
+            sb.style.setProperty('transform', 'translateX(0)', 'important');
+            sb.style.setProperty('left', '0', 'important');
+            sb.style.setProperty('visibility', 'visible', 'important');
+            sb.style.setProperty('display', 'block', 'important');
+            sb.style.setProperty('opacity', '1', 'important');
+            sb.style.setProperty('z-index', '2147482600', 'important');
+
+            const inner = sb.querySelector('[data-testid="stSidebarContent"]');
+            if (inner) {
+                inner.style.setProperty('visibility', 'visible', 'important');
+                inner.style.setProperty('opacity', '1', 'important');
+            }
+
+            return true;
         }
 
         ensureStyle();
@@ -3324,20 +3387,26 @@ def install_mobile_sidebar_toggle() -> None:
             doc.body.appendChild(btn);
         }
 
-        btn.onclick = function() {
-            if (sidebarIsOpen()) return;
-            const openBtn = nativeOpenButton();
-            if (openBtn) {
-                openBtn.click();
-                return;
+        function openMenu(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
             }
 
-            const sb = sidebar();
-            if (sb) {
-                sb.style.transform = 'translateX(0)';
-                sb.style.visibility = 'visible';
-            }
-        };
+            if (sidebarIsOpen()) return;
+
+            const usedNative = clickNativeOpenControl();
+
+            setTimeout(function() {
+                if (!sidebarIsOpen()) {
+                    forceSidebarVisible();
+                }
+                sync();
+            }, usedNative ? 120 : 20);
+        }
+
+        btn.onclick = openMenu;
+        btn.ontouchend = openMenu;
 
         function sync() {
             const mobile = win.matchMedia('(max-width: 768px)').matches;
@@ -3348,11 +3417,14 @@ def install_mobile_sidebar_toggle() -> None:
             try { win.__kakamegaSidebarObserver.disconnect(); } catch (e) {}
         }
 
-        const observer = new MutationObserver(sync);
+        const observer = new MutationObserver(function() {
+            requestAnimationFrame(sync);
+        });
         observer.observe(doc.body, {
             attributes: true,
             childList: true,
-            subtree: true
+            subtree: true,
+            attributeFilter: ['style', 'class', 'aria-expanded']
         });
         win.__kakamegaSidebarObserver = observer;
 
@@ -3368,6 +3440,7 @@ def install_mobile_sidebar_toggle() -> None:
     """
 
     components.html(html, height=0, width=0)
+
 
 
 def install_browser_transition_controller(current_page: str, render_id: int) -> None:
