@@ -2139,6 +2139,23 @@ def add_fast_location_query(
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d", {willReadFrequently:true});
         let ready = false;
+        let queryMarker = null;
+
+        const markerStyle = document.createElement("style");
+        markerStyle.textContent =
+            '@keyframes kakamegaLocationPulse{' +
+            '0%,100%{transform:scale(.82);opacity:.72;filter:brightness(1)}' +
+            '50%{transform:scale(1.18);opacity:1;filter:brightness(1.65)}' +
+            '}' +
+            '.kakamega-location-dot{' +
+            'width:10px;height:10px;border-radius:50%;' +
+            'border:2px solid rgba(255,255,255,.92);' +
+            'box-shadow:0 0 0 2px rgba(0,0,0,.28);' +
+            'animation:kakamegaLocationPulse 1.05s infinite ease-in-out;' +
+            'transform-origin:center;' +
+            '}';
+        document.head.appendChild(markerStyle);
+
         image.onload = function() {
             canvas.width = image.naturalWidth;
             canvas.height = image.naturalHeight;
@@ -2221,6 +2238,35 @@ def add_fast_location_query(
             return "No contamination is predicted, the soil is safe to grow food crops.";
         }
 
+        function updateQueryMarker(lat, lng, status) {
+            const rgb = status && status.rgb ? status.rgb : [255, 75, 75];
+            const color = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+
+            const icon = L.divIcon({
+                className: '',
+                html:
+                    '<div class="kakamega-location-dot" ' +
+                    'style="background:' + color + ';"></div>',
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+            });
+
+            if (queryMarker) {
+                queryMarker.setLatLng([lat, lng]);
+                queryMarker.setIcon(icon);
+            } else {
+                queryMarker = L.marker(
+                    [lat, lng],
+                    {
+                        icon: icon,
+                        interactive: false,
+                        keyboard: false,
+                        zIndexOffset: 1200
+                    }
+                ).addTo(map);
+            }
+        }
+
         function query(lat,lng) {
             const result=document.getElementById("query-result");
             document.getElementById("query-lat").value=lat.toFixed(6);
@@ -2237,6 +2283,8 @@ def add_fast_location_query(
             const p=ctx.getImageData(x,y,1,1).data;
             const status=classifyPixel(p[0],p[1],p[2],p[3]);
             if (!status) return;
+
+            updateQueryMarker(lat, lng, status);
 
             const nearest=nearestSample(lat,lng);
             const county=findName(countyData,lng,lat);
@@ -2255,10 +2303,6 @@ def add_fast_location_query(
                 '<div style="margin-top:9px;padding:8px;background:#252832;border-left:3px solid #ff4b4b;border-radius:3px;">'+advice(status.label)+'</div>' +
                 (uncertain ? '<div style="margin-top:8px;padding:7px;background:#4a3f22;border-radius:4px;"><strong>Uncertainty:</strong> This location is far from any sampled site, so the prediction is less certain.</div>' : '');
 
-            L.popup({maxWidth:220})
-                .setLatLng([lat,lng])
-                .setContent('<strong>'+status.label+'</strong>')
-                .openOn(map);
         }
 
         map.on("click", function(e) { query(e.latlng.lat,e.latlng.lng); });
