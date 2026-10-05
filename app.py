@@ -71,8 +71,9 @@ st.markdown("""
         max-width: 100%;
     }
     .stApp {
-        height: 100vh;
-        overflow: hidden;
+        min-height: 100vh;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column"] {
         gap: 0.1rem !important;
