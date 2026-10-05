@@ -1796,12 +1796,6 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
 
 
 def page_interactive_map(uploaded_file, medium: str):
-    loader = st.empty()
-    loader.markdown(
-        wave_loader_html(f"Loading {medium.lower()} map"),
-        unsafe_allow_html=True,
-    )
-
     raster_path = resolve_raster_path(
         medium,
         uploaded_file if medium == "Soil" else None,
@@ -1850,8 +1844,12 @@ def page_interactive_map(uploaded_file, medium: str):
     add_map_legend(m, medium)
     folium.LayerControl(collapsed=False, position="topright").add_to(m)
     add_leaflet_internal_css(m)
+    add_map_loading_overlay(
+        m,
+        overlay,
+        f"Loading {medium.lower()} map",
+    )
 
-    loader.empty()
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
         m,
@@ -2180,12 +2178,6 @@ def page_check_location(uploaded_file, medium: str):
         "before farming, drawing water or managing mine waste."
     )
 
-    loader = st.empty()
-    loader.markdown(
-        wave_loader_html(f"Loading {medium.lower()} location map"),
-        unsafe_allow_html=True,
-    )
-
     raster_path = resolve_raster_path(
         medium,
         uploaded_file if medium == "Soil" else None,
@@ -2225,8 +2217,12 @@ def page_check_location(uploaded_file, medium: str):
     add_map_legend(m, medium)
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
     add_leaflet_internal_css(m)
+    add_map_loading_overlay(
+        m,
+        overlay,
+        f"Loading {medium.lower()} location map",
+    )
 
-    loader.empty()
     st_folium(
         m,
         width="stretch",
@@ -2740,6 +2736,121 @@ def page_disclaimer():
         The data come from published studies and may not reflect current conditions.
         """
     )
+
+def add_map_loading_overlay(
+    m: folium.Map,
+    raster_overlay: ImageOverlay,
+    label: str,
+) -> None:
+    """Keep a centered loader over the Leaflet map until visible tiles and raster finish loading."""
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const rasterOverlay = __RASTER_OVERLAY__;
+        const mapEl = map.getContainer();
+
+        const loader = document.createElement("div");
+        loader.className = "kakamega-map-loader";
+        loader.style.position = "absolute";
+        loader.style.inset = "0";
+        loader.style.zIndex = "2500";
+        loader.style.display = "flex";
+        loader.style.alignItems = "center";
+        loader.style.justifyContent = "center";
+        loader.style.pointerEvents = "none";
+        loader.style.background = "rgba(14,17,23,0.24)";
+        loader.style.backdropFilter = "blur(1px)";
+
+        loader.innerHTML =
+            '<div style="display:flex;align-items:center;gap:7px;padding:10px 14px;' +
+            'border-radius:8px;background:rgba(14,17,23,0.78);color:#f4f4f5;' +
+            'font-family:Source Sans 3,Segoe UI,sans-serif;font-size:13px;font-weight:700;' +
+            'box-shadow:0 2px 10px rgba(0,0,0,0.28);">' +
+            '<span>__LABEL__</span>' +
+            '<span class="map-wave-dot map-wave-dot-1"></span>' +
+            '<span class="map-wave-dot map-wave-dot-2"></span>' +
+            '<span class="map-wave-dot map-wave-dot-3"></span>' +
+            '</div>';
+
+        const style = document.createElement("style");
+        style.textContent =
+            '.map-wave-dot{width:7px;height:7px;border-radius:50%;background:#ff4b4b;' +
+            'display:inline-block;animation:kakamegaMapWave .9s infinite ease-in-out;}' +
+            '.map-wave-dot-2{animation-delay:.14s}.map-wave-dot-3{animation-delay:.28s}' +
+            '@keyframes kakamegaMapWave{' +
+            '0%,60%,100%{transform:translateY(0);opacity:.45}' +
+            '30%{transform:translateY(-7px);opacity:1}}';
+        document.head.appendChild(style);
+
+        if (getComputedStyle(mapEl).position === "static") {
+            mapEl.style.position = "relative";
+        }
+        mapEl.appendChild(loader);
+
+        let mapReady = false;
+        let pending = 0;
+        let removed = false;
+
+        function maybeRemove() {
+            if (removed || !mapReady || pending > 0) return;
+            removed = true;
+            requestAnimationFrame(function() {
+                setTimeout(function() {
+                    loader.style.opacity = "0";
+                    loader.style.transition = "opacity 160ms ease";
+                    setTimeout(function() {
+                        if (loader.parentNode) loader.parentNode.removeChild(loader);
+                    }, 170);
+                }, 80);
+            });
+        }
+
+        function waitForLayer(layer) {
+            if (!map.hasLayer(layer)) return;
+
+            if (layer instanceof L.TileLayer) {
+                if (!layer._loading) return;
+                pending += 1;
+                layer.once("load", function() {
+                    pending -= 1;
+                    maybeRemove();
+                });
+                return;
+            }
+
+            if (layer instanceof L.ImageOverlay) {
+                const img = layer._image;
+                if (img && img.complete && img.naturalWidth > 0) return;
+                pending += 1;
+                layer.once("load", function() {
+                    pending -= 1;
+                    maybeRemove();
+                });
+            }
+        }
+
+        map.eachLayer(function(layer) {
+            if (layer instanceof L.TileLayer) waitForLayer(layer);
+        });
+        waitForLayer(rasterOverlay);
+
+        map.whenReady(function() {
+            mapReady = true;
+            maybeRemove();
+        });
+    })();
+    {% endmacro %}
+    """
+
+    template = template.replace("__RASTER_OVERLAY__", raster_overlay.get_name())
+    template = template.replace("__LABEL__", label.replace('"', '\"'))
+
+    control = MacroElement()
+    control._name = "MapLoadingOverlay"
+    control._template = Template(template)
+    m.add_child(control)
+
 
 def wave_loader_html(text: str = "Loading map") -> str:
     return f"""
