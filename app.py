@@ -109,10 +109,11 @@ st.markdown("""
         left: 44px !important;
         top: 0 !important;
         margin: 10px 0 0 0 !important;
-        min-width: 175px;
+        min-width: 185px;
         max-height: 220px;
         overflow-y: auto;
         background: rgba(255,255,255,0.94);
+        z-index: 1200 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -616,187 +617,6 @@ def add_raster_overlay(
     return overlay, metadata, bounds
 
 
-def add_map_controls(
-    m: folium.Map,
-    overlay: ImageOverlay,
-    bounds,
-    initial_opacity: float = 0.7,
-) -> None:
-    """Add browser-only center and opacity controls without Streamlit reruns."""
-    south, west = bounds[0]
-    north, east = bounds[1]
-
-    template = """
-    {% macro script(this, kwargs) %}
-    (function() {
-        const map = {{ this._parent.get_name() }};
-        const overlay = __OVERLAY_NAME__;
-        const rasterBounds = L.latLngBounds(
-            [__SOUTH__, __WEST__],
-            [__NORTH__, __EAST__]
-        );
-
-        const SampleToggleControl = L.Control.extend({
-            options: {position: "topleft"},
-            onAdd: function() {
-                const container = L.DomUtil.create(
-                    "div",
-                    "kakamega-sample-toggle"
-                );
-                container.title = "Show or hide sample points";
-                container.style.display = "flex";
-                container.style.alignItems = "center";
-                container.style.gap = "7px";
-                container.style.background = "rgba(255,255,255,0.92)";
-                container.style.color = "#222";
-                container.style.padding = "5px 9px";
-                container.style.borderRadius = "4px";
-                container.style.boxShadow = "0 1px 5px rgba(0,0,0,0.35)";
-                container.style.cursor = "pointer";
-                container.style.fontSize = "12px";
-                container.style.fontWeight = "600";
-                container.style.whiteSpace = "nowrap";
-                container.style.opacity = "0.68";
-
-                const iconWrap = L.DomUtil.create("span", "", container);
-                iconWrap.style.width = "19px";
-                iconWrap.style.height = "14px";
-                iconWrap.style.position = "relative";
-                iconWrap.innerHTML =
-                    '<svg class="sample-eye-svg" width="19" height="14" viewBox="0 0 24 18" aria-hidden="true">' +
-                    '<path d="M1 9C4.2 3.8 7.8 1.5 12 1.5S19.8 3.8 23 9c-3.2 5.2-6.8 7.5-11 7.5S4.2 14.2 1 9Z" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
-                    '<circle cx="12" cy="9" r="3.2" fill="currentColor"/>' +
-                    '</svg>' +
-                    '<span class="sample-eye-slash" style="position:absolute;left:8px;top:-3px;width:2px;height:20px;background:currentColor;transform:rotate(-45deg);transform-origin:center;"></span>';
-
-                const label = L.DomUtil.create("span", "sample-toggle-label", container);
-                label.textContent = "View soil sample points";
-
-                L.DomEvent.disableClickPropagation(container);
-                L.DomEvent.on(container, "click", function(e) {
-                    L.DomEvent.preventDefault(e);
-                    samplePointsVisible = !samplePointsVisible;
-                    removeBothSampleLayers();
-                    if (samplePointsVisible) {
-                        sampleLayerForActiveMedium().addTo(map);
-                    }
-                    updateSampleToggle();
-                });
-
-                return container;
-            }
-        });
-        map.addControl(new SampleToggleControl());
-
-        const CenterControl = L.Control.extend({
-            options: { position: "topleft" },
-            onAdd: function() {
-                const container = L.DomUtil.create(
-                    "div",
-                    "leaflet-bar kakamega-center-control"
-                );
-                const button = L.DomUtil.create("a", "", container);
-                button.href = "#";
-                button.title = "Center to raster";
-                button.setAttribute("aria-label", "Center to raster");
-                button.innerHTML = "⌖";
-                button.style.fontSize = "22px";
-                button.style.fontWeight = "700";
-                button.style.lineHeight = "30px";
-                button.style.textAlign = "center";
-                button.style.width = "30px";
-                button.style.height = "30px";
-                button.style.color = "#222";
-                button.style.background = "rgba(255,255,255,0.90)";
-
-                L.DomEvent.disableClickPropagation(container);
-                L.DomEvent.on(button, "click", function(e) {
-                    L.DomEvent.preventDefault(e);
-                    map.fitBounds(rasterBounds, {
-                        animate: true,
-                        duration: 0.25,
-                        padding: [8, 8]
-                    });
-                });
-                return container;
-            }
-        });
-        map.addControl(new CenterControl());
-
-        const OpacityControl = L.Control.extend({
-            options: { position: "topright" },
-            onAdd: function() {
-                const container = L.DomUtil.create(
-                    "div",
-                    "kakamega-opacity-control"
-                );
-                container.style.background = "transparent";
-                container.style.border = "none";
-                container.style.boxShadow = "none";
-                container.style.padding = "0";
-                container.style.margin = "8px 10px 0 0";
-
-                const panel = L.DomUtil.create("div", "", container);
-                panel.style.display = "flex";
-                panel.style.alignItems = "center";
-                panel.style.gap = "7px";
-                panel.style.padding = "4px 7px";
-                panel.style.borderRadius = "8px";
-                panel.style.background = "transparent";
-                panel.style.backdropFilter = "none";
-
-                const icon = L.DomUtil.create("span", "", panel);
-                icon.innerHTML = "◐";
-                icon.title = "Raster transparency";
-                icon.style.color = "#fff";
-                icon.style.fontSize = "17px";
-                icon.style.textShadow = "0 1px 2px rgba(0,0,0,0.65)";
-
-                const slider = L.DomUtil.create("input", "", panel);
-                slider.type = "range";
-                slider.min = "0.10";
-                slider.max = "1.00";
-                slider.step = "0.05";
-                slider.value = "__INITIAL_OPACITY__";
-                slider.title = "Raster transparency";
-                slider.setAttribute("aria-label", "Raster transparency");
-                slider.style.width = "105px";
-                slider.style.margin = "0";
-                slider.style.cursor = "pointer";
-                slider.style.accentColor = "#ffffff";
-
-                L.DomEvent.disableClickPropagation(container);
-                L.DomEvent.disableScrollPropagation(container);
-
-                slider.addEventListener("input", function() {
-                    overlay.setOpacity(parseFloat(slider.value));
-                });
-
-                return container;
-            }
-        });
-        map.addControl(new OpacityControl());
-    })();
-    {% endmacro %}
-    """
-
-    replacements = {
-        "__OVERLAY_NAME__": overlay.get_name(),
-        "__SOUTH__": repr(float(south)),
-        "__WEST__": repr(float(west)),
-        "__NORTH__": repr(float(north)),
-        "__EAST__": repr(float(east)),
-        "__INITIAL_OPACITY__": f"{float(initial_opacity):.2f}",
-    }
-    for token, value in replacements.items():
-        template = template.replace(token, value)
-
-    controls = MacroElement()
-    controls._name = "RasterMapControls"
-    controls._template = Template(template)
-    m.add_child(controls)
-
-
 def add_interactive_medium_controls(
     m: folium.Map,
     soil_overlay: ImageOverlay,
@@ -1058,6 +878,58 @@ def add_interactive_medium_controls(
             }
         });
         map.addControl(new MediumControl());
+
+        const SampleToggleControl = L.Control.extend({
+            options: {position: "topleft"},
+            onAdd: function() {
+                const container = L.DomUtil.create(
+                    "div",
+                    "kakamega-sample-toggle"
+                );
+                container.title = "Show or hide sample points";
+                container.style.display = "flex";
+                container.style.alignItems = "center";
+                container.style.gap = "7px";
+                container.style.background = "rgba(255,255,255,0.92)";
+                container.style.color = "#222";
+                container.style.padding = "5px 9px";
+                container.style.borderRadius = "4px";
+                container.style.boxShadow = "0 1px 5px rgba(0,0,0,0.35)";
+                container.style.cursor = "pointer";
+                container.style.fontSize = "12px";
+                container.style.fontWeight = "600";
+                container.style.whiteSpace = "nowrap";
+                container.style.opacity = "0.68";
+
+                const iconWrap = L.DomUtil.create("span", "", container);
+                iconWrap.style.width = "19px";
+                iconWrap.style.height = "14px";
+                iconWrap.style.position = "relative";
+                iconWrap.innerHTML =
+                    '<svg class="sample-eye-svg" width="19" height="14" viewBox="0 0 24 18" aria-hidden="true">' +
+                    '<path d="M1 9C4.2 3.8 7.8 1.5 12 1.5S19.8 3.8 23 9c-3.2 5.2-6.8 7.5-11 7.5S4.2 14.2 1 9Z" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+                    '<circle cx="12" cy="9" r="3.2" fill="currentColor"/>' +
+                    '</svg>' +
+                    '<span class="sample-eye-slash" style="position:absolute;left:8px;top:-3px;width:2px;height:20px;background:currentColor;transform:rotate(-45deg);transform-origin:center;"></span>';
+
+                const label = L.DomUtil.create("span", "sample-toggle-label", container);
+                label.textContent = "View soil sample points";
+
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.on(container, "click", function(e) {
+                    L.DomEvent.preventDefault(e);
+                    samplePointsVisible = !samplePointsVisible;
+                    removeBothSampleLayers();
+                    if (samplePointsVisible) {
+                        sampleLayerForActiveMedium().addTo(map);
+                    }
+                    updateSampleToggle();
+                });
+
+                return container;
+            }
+        });
+        map.addControl(new SampleToggleControl());
 
         const CenterControl = L.Control.extend({
             options: {position: "topleft"},
