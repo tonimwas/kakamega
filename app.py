@@ -3943,10 +3943,20 @@ def install_mobile_sidebar_toggle() -> None:
                 "border-radius:6px;background:#1a1f27;color:#f4f4f5;padding:9px 4px;" +
                 "font-size:13px;font-weight:700;cursor:pointer;}" +
                 ".kmm-medium.active{border-color:#ff4b4b;background:#2a2024;}" +
+                "#kakamega-desktop-sidebar-btn{" +
+                "position:fixed;left:12px;top:12px;z-index:2147483100;" +
+                "width:38px;height:38px;border-radius:8px;" +
+                "border:1px solid rgba(255,255,255,.25);" +
+                "background:rgba(14,17,23,.94);color:#fff;" +
+                "display:none;align-items:center;justify-content:center;" +
+                "font-size:22px;line-height:1;cursor:pointer;" +
+                "touch-action:manipulation;-webkit-tap-highlight-color:transparent;" +
+                "box-shadow:0 2px 9px rgba(0,0,0,.34);}" +
+                "#kakamega-desktop-sidebar-btn:active{transform:scale(.96);}" +
                 "@media(max-width:768px){#kakamega-mobile-menu-btn{display:flex !important;}}" +
                 "@media(min-width:769px){" +
                 "#kakamega-mobile-menu-btn,#kakamega-mobile-menu-backdrop," +
-                "#kakamega-mobile-menu-drawer{display:none !important;}}";
+                "#kakamega-mobile-menu-drawer{display:none !important;}}" ;
         }
 
         function sidebar() {
@@ -4021,9 +4031,11 @@ def install_mobile_sidebar_toggle() -> None:
         const oldBtn = doc.getElementById("kakamega-mobile-menu-btn");
         const oldBackdrop = doc.getElementById("kakamega-mobile-menu-backdrop");
         const oldDrawer = doc.getElementById("kakamega-mobile-menu-drawer");
+        const oldDesktopBtn = doc.getElementById("kakamega-desktop-sidebar-btn");
         if (oldBtn) oldBtn.remove();
         if (oldBackdrop) oldBackdrop.remove();
         if (oldDrawer) oldDrawer.remove();
+        if (oldDesktopBtn) oldDesktopBtn.remove();
 
         const button = doc.createElement("button");
         button.id = "kakamega-mobile-menu-btn";
@@ -4031,6 +4043,13 @@ def install_mobile_sidebar_toggle() -> None:
         button.setAttribute("aria-label", "Open navigation menu");
         button.setAttribute("title", "Open navigation menu");
         button.innerHTML = "&#9776;";
+
+        const desktopButton = doc.createElement("button");
+        desktopButton.id = "kakamega-desktop-sidebar-btn";
+        desktopButton.type = "button";
+        desktopButton.setAttribute("aria-label", "Open navigation menu");
+        desktopButton.setAttribute("title", "Open navigation menu");
+        desktopButton.innerHTML = "&#9776;";
 
         const backdrop = doc.createElement("div");
         backdrop.id = "kakamega-mobile-menu-backdrop";
@@ -4058,6 +4077,7 @@ def install_mobile_sidebar_toggle() -> None:
         doc.body.appendChild(backdrop);
         doc.body.appendChild(drawer);
         doc.body.appendChild(button);
+        doc.body.appendChild(desktopButton);
 
         function syncActive() {
             const selected = currentSelections();
@@ -4105,13 +4125,91 @@ def install_mobile_sidebar_toggle() -> None:
             });
         });
 
+        function sidebarIsOpenDesktop() {
+            const sb = sidebar();
+            if (!sb) return false;
+            const rect = sb.getBoundingClientRect();
+            const cs = win.getComputedStyle(sb);
+            return (
+                rect.width > 120 &&
+                rect.right > 20 &&
+                cs.display !== "none" &&
+                cs.visibility !== "hidden" &&
+                cs.opacity !== "0"
+            );
+        }
+
+        function nativeSidebarOpenControl() {
+            return (
+                doc.querySelector('[data-testid="stSidebarCollapsedControl"] button') ||
+                doc.querySelector('[data-testid="stSidebarCollapsedControl"]') ||
+                doc.querySelector('[data-testid*="SidebarCollapsed"] button') ||
+                doc.querySelector('[data-testid*="SidebarCollapsed"]') ||
+                Array.from(doc.querySelectorAll("button")).find(function(btn) {
+                    const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+                    const title = (btn.getAttribute("title") || "").toLowerCase();
+                    return (
+                        aria.includes("open sidebar") ||
+                        aria.includes("expand sidebar") ||
+                        title.includes("open sidebar") ||
+                        title.includes("expand sidebar")
+                    );
+                }) ||
+                null
+            );
+        }
+
+        function syncDesktopButton() {
+            const desktop = win.matchMedia("(min-width:769px)").matches;
+            desktopButton.style.display =
+                (desktop && !sidebarIsOpenDesktop()) ? "flex" : "none";
+        }
+
+        desktopButton.addEventListener("click", function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const control = nativeSidebarOpenControl();
+            if (!control) return;
+
+            const clickable =
+                control.matches && control.matches("button")
+                    ? control
+                    : control.querySelector && control.querySelector("button")
+                        ? control.querySelector("button")
+                        : control;
+
+            try { clickable.click(); } catch (e) {}
+
+            setTimeout(syncDesktopButton, 80);
+            setTimeout(syncDesktopButton, 220);
+        });
+
+        if (win.__kakamegaDesktopSidebarObserver) {
+            try { win.__kakamegaDesktopSidebarObserver.disconnect(); } catch (e) {}
+        }
+
+        const desktopObserver = new MutationObserver(function() {
+            requestAnimationFrame(syncDesktopButton);
+        });
+        desktopObserver.observe(doc.body, {
+            attributes: true,
+            childList: true,
+            subtree: true,
+            attributeFilter: ["class", "style", "aria-expanded"]
+        });
+        win.__kakamegaDesktopSidebarObserver = desktopObserver;
+
         if (win.__kakamegaMobileMenuResize) {
             win.removeEventListener("resize", win.__kakamegaMobileMenuResize);
         }
         win.__kakamegaMobileMenuResize = function() {
             if (!win.matchMedia("(max-width:768px)").matches) closeDrawer();
+            syncDesktopButton();
         };
         win.addEventListener("resize", win.__kakamegaMobileMenuResize);
+
+        syncDesktopButton();
     })();
     </script>
     """
