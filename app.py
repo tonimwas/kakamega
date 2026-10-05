@@ -1817,21 +1817,143 @@ def page_data_explorer(uploaded_file, medium: str):
             st.write(f"- North, East: {bounds[1][0]:.5f}, {bounds[1][1]:.5f}")
 
 
-def page_model_results():
-    st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
-    st.header("Model results")
-    st.write("Summary of the prediction used by this map portal.")
-    st.markdown(
-        """
-        - **Model type:** Random Forest classifier / spatial prediction
-        - **Mapped media:** Soil and Water
-        - **Soil output:** Four classes (1 Clean – 4 Heavy contamination)
-        - **Water output:** Two classes (1 Safe, 2 Unsafe)
-        - **Display CRS:** EPSG:4326 for the web map; sampling is performed in the raster native CRS (UTM zone 37S / EPSG:32737 for the current soil grid)
-        """
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+@st.cache_data(show_spinner=False)
+def water_feature_importance_table() -> pd.DataFrame:
+    try:
+        model = joblib.load(WATER_RF_MODEL)
+        meta = joblib.load(WATER_FEATURE_META)
+        names = list(meta.get("features", []))
+        values = list(model.feature_importances_)
+        if len(names) != len(values):
+            return pd.DataFrame()
+        return (
+            pd.DataFrame({"Feature": names, "Importance": values})
+            .sort_values("Importance", ascending=False)
+        )
+    except Exception:
+        return pd.DataFrame()
 
+
+def page_model_results(medium: str):
+    st.header("Model Results")
+
+    if medium == "Soil":
+        st.write(
+            "XGBoost was chosen for soil. It reached 76.2% accuracy and a macro F1 of 0.57 "
+            "in 5-fold stratified cross-validation on 122 soil samples. It identifies Heavy "
+            "contamination well (recall 0.86) but is less reliable for Moderate, Slight and Clean, "
+            "which have few samples. The strongest predictors include distance from the closest mine and soil type."
+        )
+
+        comparison = pd.DataFrame([
+            ["XGBoost (chosen)", "76.2%", 0.57, 0.56, 0.86],
+            ["Random Forest", "73.0%", 0.57, 0.58, 0.79],
+            ["KNN", "73.8%", 0.53, 0.54, 0.84],
+            ["Ordinal logistic regression", "79.5%", 0.44, 0.42, 0.99],
+            ["Logistic regression", "39.3%", 0.37, 0.48, 0.36],
+        ], columns=["Model", "Accuracy", "Macro F1", "Macro recall", "Heavy recall"])
+
+        per_class = pd.DataFrame([
+            ["Clean", 0.67, 0.40, "0.50 (5)"],
+            ["Slight contamination", 0.55, 0.60, "0.57 (10)"],
+            ["Moderate contamination", 0.32, 0.40, "0.35 (15)"],
+            ["Heavy contamination", 0.89, 0.86, "0.87 (92)"],
+        ], columns=["Class", "Precision", "Recall", "F1 (samples)"])
+
+        st.subheader("Models comparison")
+        st.dataframe(comparison, use_container_width=True, hide_index=True)
+
+        st.subheader("XGBoost per class")
+        st.dataframe(per_class, use_container_width=True, hide_index=True)
+
+        chart_col, matrix_col = st.columns([1.15, 1])
+        with chart_col:
+            st.subheader("Feature importance")
+            soil_importance = pd.DataFrame([
+                ["Distance from closest mine", 0.148007],
+                ["Soil type", 0.126351],
+                ["Distance from closest waste disposal", 0.106336],
+                ["Clay percent", 0.084425],
+                ["Longitude", 0.062403],
+                ["3-month temperature", 0.056707],
+                ["Distance from closest road", 0.051567],
+                ["Latitude", 0.049751],
+                ["Upstream waste pit distance", 0.042966],
+                ["SOC percent", 0.042614],
+                ["Land use", 0.040886],
+                ["3-month rainfall", 0.040570],
+                ["Soil pH", 0.039696],
+                ["Elevation", 0.037968],
+                ["Upstream mine distance", 0.036123],
+                ["Distance from closest stream", 0.033631],
+            ], columns=["Feature", "Importance"])
+            st.bar_chart(
+                soil_importance.set_index("Feature").sort_values("Importance"),
+                horizontal=True,
+                height=480,
+            )
+
+        with matrix_col:
+            st.subheader("Confusion matrix")
+            if SOIL_CONFUSION_IMAGE.exists():
+                st.image(str(SOIL_CONFUSION_IMAGE), use_container_width=True)
+
+        st.caption("Classified against CCME agriculture soil quality guidelines.")
+
+    else:
+        st.write(
+            "Random Forest was chosen for water, classed as Safe or Unsafe. It reached 79.8% accuracy "
+            "in spatial cross-validation on 89 water samples, correctly identifying 81% of Safe and "
+            "78% of Unsafe samples. The strongest predictors are elevation, distance from the closest "
+            "waste-disposal site, rainfall and temperature."
+        )
+
+        comparison = pd.DataFrame([
+            ["Random Forest (chosen)", "79.8%", 0.77, 0.79, 0.78],
+            ["XGBoost", "77.5%", 0.74, 0.76, 0.70],
+            ["KNN", "69.7%", 0.65, 0.66, 0.56],
+            ["Logistic regression", "69.7%", 0.65, 0.66, 0.56],
+        ], columns=["Model", "Accuracy", "Macro F1", "Macro recall", "Unsafe recall"])
+
+        per_class = pd.DataFrame([
+            ["Safe", 0.89, 0.81, "0.85 (62)"],
+            ["Unsafe", 0.64, 0.78, "0.70 (27)"],
+        ], columns=["Class", "Precision", "Recall", "F1 (samples)"])
+
+        st.subheader("Models comparison")
+        st.dataframe(comparison, use_container_width=True, hide_index=True)
+
+        st.subheader("Random Forest per class")
+        st.dataframe(per_class, use_container_width=True, hide_index=True)
+
+        chart_col, matrix_col = st.columns([1.15, 1])
+        with chart_col:
+            st.subheader("Feature importance")
+            importance = water_feature_importance_table()
+            if importance.empty:
+                st.info(
+                    "The saved Random Forest model could not be loaded in this environment. "
+                    "The strongest predictors reported by the project are elevation, waste-disposal distance, rainfall and temperature."
+                )
+            else:
+                plot_df = importance.copy()
+                plot_df["Feature"] = (
+                    plot_df["Feature"]
+                    .str.replace("_", " ", regex=False)
+                    .str.replace("Avg 3months", "3-month", regex=False)
+                )
+                st.bar_chart(
+                    plot_df.set_index("Feature").sort_values("Importance"),
+                    horizontal=True,
+                    height=480,
+                )
+
+        with matrix_col:
+            st.subheader("Confusion matrix")
+            if WATER_CONFUSION_IMAGE.exists():
+                st.image(str(WATER_CONFUSION_IMAGE), use_container_width=True)
+
+        st.caption("Classified against WHO drinking-water guidelines and NEMA guidelines for zinc.")
 
 def page_methodology():
     st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
