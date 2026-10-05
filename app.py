@@ -3943,18 +3943,18 @@ def install_mobile_sidebar_toggle() -> None:
                 "border-radius:6px;background:#1a1f27;color:#f4f4f5;padding:9px 4px;" +
                 "font-size:13px;font-weight:700;cursor:pointer;}" +
                 ".kmm-medium.active{border-color:#ff4b4b;background:#2a2024;}" +
-                "#kakamega-desktop-sidebar-btn{" +
-                "position:fixed;left:12px;top:12px;z-index:2147483100;" +
-                "width:38px;height:38px;border-radius:8px;" +
-                "border:1px solid rgba(255,255,255,.25);" +
-                "background:rgba(14,17,23,.94);color:#fff;" +
-                "display:none;align-items:center;justify-content:center;" +
-                "font-size:22px;line-height:1;cursor:pointer;" +
-                "touch-action:manipulation;-webkit-tap-highlight-color:transparent;" +
-                "box-shadow:0 2px 9px rgba(0,0,0,.34);}" +
-                "#kakamega-desktop-sidebar-btn:active{transform:scale(.96);}" +
+                "@media(min-width:769px){" +
+                "[data-testid='stSidebarCollapsedControl']{" +
+                "display:none !important;visibility:hidden !important;pointer-events:none !important;}" +
+                "[data-testid='stSidebar'] button[aria-label*='close sidebar' i]," +
+                "[data-testid='stSidebar'] button[title*='close sidebar' i]," +
+                "[data-testid='stSidebar'] [data-testid*='SidebarCollapse']{" +
+                "display:none !important;visibility:hidden !important;pointer-events:none !important;}" +
+                "}" +
                 "@media(max-width:768px){#kakamega-mobile-menu-btn{display:flex !important;}}" +
-                "@media(min-width:769px){#kakamega-mobile-menu-btn{display:none !important;}}" ;
+                "@media(min-width:769px){" +
+                "#kakamega-mobile-menu-btn,#kakamega-mobile-menu-backdrop," +
+                "#kakamega-mobile-menu-drawer{display:none !important;}}";
         }
 
         function sidebar() {
@@ -4029,11 +4029,9 @@ def install_mobile_sidebar_toggle() -> None:
         const oldBtn = doc.getElementById("kakamega-mobile-menu-btn");
         const oldBackdrop = doc.getElementById("kakamega-mobile-menu-backdrop");
         const oldDrawer = doc.getElementById("kakamega-mobile-menu-drawer");
-        const oldDesktopBtn = doc.getElementById("kakamega-desktop-sidebar-btn");
         if (oldBtn) oldBtn.remove();
         if (oldBackdrop) oldBackdrop.remove();
         if (oldDrawer) oldDrawer.remove();
-        if (oldDesktopBtn) oldDesktopBtn.remove();
 
         const button = doc.createElement("button");
         button.id = "kakamega-mobile-menu-btn";
@@ -4041,13 +4039,6 @@ def install_mobile_sidebar_toggle() -> None:
         button.setAttribute("aria-label", "Open navigation menu");
         button.setAttribute("title", "Open navigation menu");
         button.innerHTML = "&#9776;";
-
-        const desktopButton = doc.createElement("button");
-        desktopButton.id = "kakamega-desktop-sidebar-btn";
-        desktopButton.type = "button";
-        desktopButton.setAttribute("aria-label", "Open navigation menu");
-        desktopButton.setAttribute("title", "Open navigation menu");
-        desktopButton.innerHTML = "&#9776;";
 
         const backdrop = doc.createElement("div");
         backdrop.id = "kakamega-mobile-menu-backdrop";
@@ -4075,7 +4066,6 @@ def install_mobile_sidebar_toggle() -> None:
         doc.body.appendChild(backdrop);
         doc.body.appendChild(drawer);
         doc.body.appendChild(button);
-        doc.body.appendChild(desktopButton);
 
         function syncActive() {
             const selected = currentSelections();
@@ -4099,7 +4089,6 @@ def install_mobile_sidebar_toggle() -> None:
             drawer.classList.remove("open");
             backdrop.style.display = "none";
             button.setAttribute("aria-expanded", "false");
-            desktopButton.setAttribute("aria-expanded", "false");
         }
 
         button.addEventListener("pointerup", function(event) {
@@ -4138,42 +4127,54 @@ def install_mobile_sidebar_toggle() -> None:
             );
         }
 
-        function syncDesktopButton() {
-            const desktop = win.matchMedia("(min-width:769px)").matches;
-            desktopButton.style.display =
-                (desktop && !sidebarIsOpenDesktop()) ? "flex" : "none";
+        function nativeCollapsedControl() {
+            return (
+                doc.querySelector('[data-testid="stSidebarCollapsedControl"] button') ||
+                doc.querySelector('[data-testid="stSidebarCollapsedControl"]') ||
+                doc.querySelector('[data-testid*="SidebarCollapsed"] button') ||
+                doc.querySelector('[data-testid*="SidebarCollapsed"]')
+            );
         }
 
-        desktopButton.addEventListener("pointerup", function(event) {
-            event.preventDefault();
-            event.stopPropagation();
+        let desktopExpandPending = false;
 
-            // Use our independent navigation drawer directly on desktop.
-            // This avoids depending on Streamlit's hidden collapsed control.
-            syncActive();
-            backdrop.style.display = "block";
-            drawer.classList.add("open");
-            desktopButton.setAttribute("aria-expanded", "true");
-        });
+        function ensureDesktopSidebarExpanded() {
+            if (!win.matchMedia("(min-width:769px)").matches) return;
+            if (sidebarIsOpenDesktop() || desktopExpandPending) return;
 
-        backdrop.addEventListener("pointerup", function(event) {
-            event.preventDefault();
-            closeDrawer();
-            desktopButton.setAttribute("aria-expanded", "false");
-        });
+            const control = nativeCollapsedControl();
+            if (!control) return;
 
-        drawer.querySelectorAll("[data-target]").forEach(function(el) {
-            el.addEventListener("pointerup", function() {
-                desktopButton.setAttribute("aria-expanded", "false");
-            });
-        });
+            const clickable =
+                control.matches && control.matches("button")
+                    ? control
+                    : control.querySelector && control.querySelector("button")
+                        ? control.querySelector("button")
+                        : control;
+
+            desktopExpandPending = true;
+            try { clickable.click(); } catch (e) {}
+            setTimeout(function() {
+                desktopExpandPending = false;
+                if (!sidebarIsOpenDesktop()) {
+                    const retry = nativeCollapsedControl();
+                    const retryButton =
+                        retry && retry.matches && retry.matches("button")
+                            ? retry
+                            : retry && retry.querySelector
+                                ? retry.querySelector("button")
+                                : retry;
+                    try { if (retryButton) retryButton.click(); } catch (e) {}
+                }
+            }, 180);
+        }
 
         if (win.__kakamegaDesktopSidebarObserver) {
             try { win.__kakamegaDesktopSidebarObserver.disconnect(); } catch (e) {}
         }
 
         const desktopObserver = new MutationObserver(function() {
-            requestAnimationFrame(syncDesktopButton);
+            requestAnimationFrame(ensureDesktopSidebarExpanded);
         });
         desktopObserver.observe(doc.body, {
             attributes: true,
@@ -4188,11 +4189,13 @@ def install_mobile_sidebar_toggle() -> None:
         }
         win.__kakamegaMobileMenuResize = function() {
             if (!win.matchMedia("(max-width:768px)").matches) closeDrawer();
-            syncDesktopButton();
+            ensureDesktopSidebarExpanded();
         };
         win.addEventListener("resize", win.__kakamegaMobileMenuResize);
 
-        syncDesktopButton();
+        ensureDesktopSidebarExpanded();
+        setTimeout(ensureDesktopSidebarExpanded, 120);
+        setTimeout(ensureDesktopSidebarExpanded, 420);
     })();
     </script>
     """
