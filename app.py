@@ -595,7 +595,36 @@ def class_advice(medium: str, class_label: str) -> str:
 
 def _metal_table_for_medium(medium: str) -> pd.DataFrame:
     path = SOIL_METALS_TABLE if medium == "Soil" else WATER_METALS_TABLE
-    return load_compressed_csv(str(path))
+    table = load_compressed_csv(str(path))
+    if table.empty or "ID" not in table.columns:
+        return table
+    valid = table["ID"].astype(str).str.fullmatch(r"kak\d+", na=False)
+    return table.loc[valid].copy()
+
+
+def sample_metal_summary_html(sample_id: str, medium: str) -> str:
+    table = _metal_table_for_medium(medium)
+    if table.empty or "ID" not in table.columns:
+        return "Not available"
+
+    rows = table[table["ID"].astype(str) == str(sample_id)]
+    if rows.empty:
+        return "Not available"
+
+    row = rows.iloc[0]
+    suffix = "mg_kg" if medium == "Soil" else "mg_L"
+    unit = "mg/kg" if medium == "Soil" else "mg/L"
+    parts = []
+    for metal in ["Hg", "As", "Pb", "Cd", "Cr", "Cu", "Zn", "Ni"]:
+        col = f"{metal}_{suffix}"
+        if col not in row.index or pd.isna(row[col]):
+            continue
+        try:
+            value = float(row[col])
+            parts.append(f"{metal}: {value:.5g} {unit}")
+        except Exception:
+            parts.append(f"{metal}: {row[col]} {unit}")
+    return "<br>".join(parts) if parts else "Not available"
 
 
 def sample_dominant_metals(sample_id: str, medium: str) -> str:
@@ -652,6 +681,7 @@ def add_sample_point_layers(m: folium.Map):
             sample_id = str(row.get("ID", ""))
             category = str(row.get("Overall_cl", ""))
             metals = sample_dominant_metals(sample_id, "Soil")
+            concentrations = sample_metal_summary_html(sample_id, "Soil")
             advice = class_advice("Soil", category)
             popup = f"""
             <div style="font-size:12px;color:#111;min-width:230px;">
@@ -659,6 +689,7 @@ def add_sample_point_layers(m: folium.Map):
                 <strong>Coordinates:</strong> {float(geom.y):.6f}, {float(geom.x):.6f}<br>
                 <strong>Class:</strong> {category}<br>
                 <strong>Dominant metal(s):</strong> {metals}<br>
+                <strong>Metal concentrations:</strong><br>{concentrations}<br>
                 <strong>Advice:</strong> {advice}
             </div>
             """
@@ -682,6 +713,7 @@ def add_sample_point_layers(m: folium.Map):
             sample_id = str(row.get("ID", ""))
             category = str(row.get("Safety_cla", ""))
             metals = sample_dominant_metals(sample_id, "Water")
+            concentrations = sample_metal_summary_html(sample_id, "Water")
             advice = class_advice("Water", category)
             popup = f"""
             <div style="font-size:12px;color:#111;min-width:230px;">
@@ -689,6 +721,7 @@ def add_sample_point_layers(m: folium.Map):
                 <strong>Coordinates:</strong> {float(geom.y):.6f}, {float(geom.x):.6f}<br>
                 <strong>Class:</strong> {category}<br>
                 <strong>Dominant metal(s):</strong> {metals}<br>
+                <strong>Metal concentrations:</strong><br>{concentrations}<br>
                 <strong>Advice:</strong> {advice}
             </div>
             """
