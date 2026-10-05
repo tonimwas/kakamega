@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import struct
 from pathlib import Path
 
 import folium
@@ -441,15 +442,112 @@ def add_vector_layers(m: folium.Map) -> None:
 
 @st.cache_data(show_spinner=False)
 def load_sample_points(path_string: str) -> gpd.GeoDataFrame:
-    """Load sample points in WGS84 for map display and Data Explorer tables."""
+    """Load sample points in WGS84, falling back to DBF coordinates if SHX is missing."""
     path = Path(path_string)
     if not path.exists():
         return gpd.GeoDataFrame()
 
-    gdf = gpd.read_file(path)
-    if gdf.crs is not None and str(gdf.crs) != "EPSG:4326":
-        gdf = gdf.to_crs("EPSG:4326")
-    return gdf
+    try:
+        gdf = gpd.read_file(path)
+        if gdf.crs is not None and str(gdf.crs) != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+        return gdf
+    except Exception:
+        # Some uploaded shapefile sets are missing the .shx index.
+        # Both sample DBFs contain latitude/longitude fields, so rebuild
+        # point geometry directly from those attributes instead.
+        dbf_path = path.with_suffix(".dbf")
+        if not dbf_path.exists():
+            return gpd.GeoDataFrame()
+
+        records = _read_dbf_records(dbf_path)
+        if not records:
+            return gpd.GeoDataFrame()
+
+        import pandas as pd
+
+        df = pd.DataFrame(records)
+
+        lat_field = next(
+            (name for name in ("LATITUDE", "Latitude", "latitude", "LAT", "Lat") if name in df.columns),
+            None,
+        )
+        lon_field = next(
+            (name for name in ("Longitude", "LONGITUDE", "longitude", "LON", "Lon") if name in df.columns),
+            None,
+        )
+
+        if lat_field is None or lon_field is None:
+            return gpd.GeoDataFrame(df)
+
+        df[lat_field] = pd.to_numeric(df[lat_field], errors="coerce")
+        df[lon_field] = pd.to_numeric(df[lon_field], errors="coerce")
+        df = df.dropna(subset=[lat_field, lon_field]).copy()
+
+        return gpd.GeoDataFrame(
+            df,
+            geometry=gpd.points_from_xy(df[lon_field], df[lat_field]),
+            crs="EPSG:4326",
+        )
+
+
+def _read_dbf_records(dbf_path: Path) -> list[dict]:
+    """Minimal DBF reader for the sample tables using only the Python standard library."""
+    with dbf_path.open("rb") as fh:
+        header = fh.read(32)
+        if len(header) < 32:
+            return []
+
+        num_records = struct.unpack("<I", header[4:8])[0]
+        header_len = struct.unpack("<H", header[8:10])[0]
+        record_len = struct.unpack("<H", header[10:12])[0]
+
+        fields = []
+        while True:
+            first = fh.read(1)
+            if not first or first == b"\r":
+                break
+
+            descriptor = first + fh.read(31)
+            raw_name = descriptor[:11].split(b"\x00", 1)[0]
+            name = raw_name.decode("latin1", errors="ignore").strip()
+            field_type = chr(descriptor[11])
+            length = descriptor[16]
+            decimals = descriptor[17]
+            fields.append((name, field_type, length, decimals))
+
+        fh.seek(header_len)
+        records = []
+
+        for _ in range(num_records):
+            row = fh.read(record_len)
+            if len(row) < record_len:
+                break
+            if row[:1] == b"*":
+                continue
+
+            pos = 1
+            record = {}
+            for name, field_type, length, decimals in fields:
+                raw = row[pos:pos + length]
+                pos += length
+                text = raw.decode("latin1", errors="ignore").strip()
+
+                if not text:
+                    record[name] = None
+                elif field_type in ("N", "F"):
+                    try:
+                        record[name] = float(text)
+                    except ValueError:
+                        record[name] = text
+                elif field_type == "L":
+                    record[name] = text.upper() in ("Y", "T")
+                else:
+                    record[name] = text
+
+            records.append(record)
+
+        return records
 
 
 def _soil_sample_color(value) -> str:
