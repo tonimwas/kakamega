@@ -770,6 +770,12 @@ def add_sample_point_layer(m: folium.Map, medium: str):
                 fill_color=color_fn(category),
                 fill_opacity=0.95,
                 popup=folium.Popup(popup, max_width=320),
+                tooltip=folium.Tooltip(
+                    sample_id,
+                    sticky=False,
+                    direction="top",
+                    opacity=0.92,
+                ),
             ).add_to(layer)
 
     layer.add_to(m)
@@ -1955,6 +1961,15 @@ def page_interactive_map(uploaded_file, medium: str):
 
     m.fit_bounds(county_bounds)
 
+    focused_sample_id = st.session_state.pop("_focus_sample_id", None)
+    focused_sample_medium = st.session_state.pop("_focus_sample_medium", None)
+    focused_sample = None
+    if (
+        focused_sample_id
+        and focused_sample_medium == medium
+    ):
+        focused_sample = sample_record_by_id(focused_sample_id, medium)
+
     sample_layer = add_sample_point_layer(m, medium)
 
     add_single_medium_controls(
@@ -1966,6 +1981,9 @@ def page_interactive_map(uploaded_file, medium: str):
         sample_layer,
         medium,
     )
+
+    if focused_sample is not None:
+        add_focused_sample_marker(m, focused_sample, medium)
 
     add_map_legend(m, medium)
     folium.LayerControl(collapsed=False, position="topright").add_to(m)
@@ -2021,6 +2039,71 @@ def sample_query_records(medium: str) -> list[dict]:
             "metals": sample_dominant_metals(sid, medium),
         })
     return records
+
+
+def sample_record_by_id(sample_id: str, medium: str) -> dict | None:
+    """Return one compact sample record by ID, case-insensitively."""
+    wanted = str(sample_id).strip().lower()
+    for record in sample_query_records(medium):
+        if str(record.get("id", "")).strip().lower() == wanted:
+            return record
+    return None
+
+
+def add_focused_sample_marker(m: folium.Map, sample: dict, medium: str) -> None:
+    """Add one pulsing marker used when Data Explorer opens a sample on the map."""
+    marker = MacroElement()
+    marker._name = "FocusedSampleMarker"
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const lat = __LAT__;
+        const lng = __LNG__;
+        const sampleId = __SAMPLE_ID__;
+
+        const style = document.createElement("style");
+        style.textContent =
+            '@keyframes kakamegaFocusedSamplePulse{' +
+            '0%,100%{transform:scale(.82);opacity:.72;box-shadow:0 0 0 2px rgba(255,255,255,.75)}' +
+            '50%{transform:scale(1.28);opacity:1;box-shadow:0 0 0 5px rgba(255,255,255,.24)}' +
+            '}' +
+            '.kakamega-focused-sample{' +
+            'width:12px;height:12px;border-radius:50%;background:#ff4b4b;' +
+            'border:2px solid #fff;animation:kakamegaFocusedSamplePulse 1s infinite ease-in-out;' +
+            'transform-origin:center;' +
+            '}';
+        document.head.appendChild(style);
+
+        const icon = L.divIcon({
+            className: '',
+            html: '<div class="kakamega-focused-sample"></div>',
+            iconSize: [16,16],
+            iconAnchor: [8,8]
+        });
+
+        L.marker([lat,lng], {
+            icon: icon,
+            interactive: true,
+            keyboard: false,
+            zIndexOffset: 1800
+        })
+        .bindTooltip(sampleId, {
+            permanent: false,
+            direction: 'top',
+            opacity: .95
+        })
+        .addTo(map);
+
+        map.setView([lat,lng], Math.max(map.getZoom(), 15), {animate:false});
+    })();
+    {% endmacro %}
+    """
+    template = template.replace("__LAT__", repr(float(sample["lat"])))
+    template = template.replace("__LNG__", repr(float(sample["lng"])))
+    template = template.replace("__SAMPLE_ID__", json.dumps(str(sample["id"])))
+    marker._template = Template(template)
+    m.add_child(marker)
 
 
 def add_fast_location_query(
@@ -2211,6 +2294,7 @@ def add_fast_location_query(
         const ctx = canvas.getContext("2d", {willReadFrequently:true});
         let ready = false;
         let queryMarker = null;
+        let nearestSampleMarker = null;
 
         const markerStyle = document.createElement("style");
         markerStyle.textContent =
@@ -2223,6 +2307,12 @@ def add_fast_location_query(
             'border:2px solid rgba(255,255,255,.92);' +
             'box-shadow:0 0 0 2px rgba(0,0,0,.28);' +
             'animation:kakamegaLocationPulse 1.05s infinite ease-in-out;' +
+            'transform-origin:center;' +
+            '}' +
+            '.kakamega-nearest-sample-dot{' +
+            'width:11px;height:11px;border-radius:50%;background:#29b6f6;' +
+            'border:2px solid #fff;box-shadow:0 0 0 2px rgba(0,0,0,.30);' +
+            'animation:kakamegaLocationPulse .95s infinite ease-in-out;' +
             'transform-origin:center;' +
             '}';
         document.head.appendChild(markerStyle);
@@ -2338,6 +2428,41 @@ def add_fast_location_query(
             }
         }
 
+        function showNearestSample(sample) {
+            if (!sample) return;
+
+            const icon = L.divIcon({
+                className: '',
+                html: '<div class="kakamega-nearest-sample-dot"></div>',
+                iconSize: [15,15],
+                iconAnchor: [7.5,7.5]
+            });
+
+            if (nearestSampleMarker) {
+                nearestSampleMarker.setLatLng([sample.lat, sample.lng]);
+                nearestSampleMarker.setIcon(icon);
+            } else {
+                nearestSampleMarker = L.marker(
+                    [sample.lat, sample.lng],
+                    {
+                        icon: icon,
+                        interactive: true,
+                        keyboard: false,
+                        zIndexOffset: 1600
+                    }
+                ).addTo(map);
+            }
+
+            nearestSampleMarker.unbindTooltip();
+            nearestSampleMarker.bindTooltip(sample.id, {
+                direction: 'top',
+                opacity: .95
+            });
+            map.setView([sample.lat, sample.lng], Math.max(map.getZoom(), 15), {
+                animate: true
+            });
+        }
+
         function query(lat,lng) {
             const result=document.getElementById("query-result");
             document.getElementById("query-lat").value=lat.toFixed(6);
@@ -2370,13 +2495,30 @@ def add_fast_location_query(
                 '<div><strong>County:</strong> '+county+'</div>' +
                 '<div><strong>Constituency:</strong> '+constituency+'</div>' +
                 '<div><strong>Ward:</strong> '+ward+'</div>' +
-                (nearest ? '<div><strong>Nearest sample:</strong> '+nearest.id+' ('+nearest.distance.toFixed(2)+' km)</div>' : '') +
+                (nearest ? '<div><strong>Nearest sample:</strong> ' +
+                    '<button type="button" class="nearest-sample-link" data-sample-id="' +
+                    nearest.id +
+                    '" style="border:0;background:transparent;color:#58b9ff;padding:0;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;">' +
+                    nearest.id + '</button> ('+nearest.distance.toFixed(2)+' km)</div>' : '') +
                 '<div style="margin-top:9px;padding:8px;background:#252832;border-left:3px solid #ff4b4b;border-radius:3px;">'+advice(status.label)+'</div>' +
                 (uncertain ? '<div style="margin-top:8px;padding:7px;background:#4a3f22;border-radius:4px;"><strong>Uncertainty:</strong> This location is far from any sampled site, so the prediction is less certain.</div>' : '');
 
         }
 
         map.on("click", function(e) { query(e.latlng.lat,e.latlng.lng); });
+
+        panel.addEventListener("click", function(event) {
+            const link = event.target.closest(".nearest-sample-link");
+            if (!link) return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            const id = link.getAttribute("data-sample-id");
+            const sample = samples.find(function(item) {
+                return String(item.id) === String(id);
+            });
+            if (sample) showNearestSample(sample);
+        });
 
         document.getElementById("query-btn").addEventListener("click", function() {
             const lat=parseFloat(document.getElementById("query-lat").value);
@@ -2607,11 +2749,33 @@ def page_data_explorer(uploaded_file, medium: str):
     else:
         expected = 122 if medium == "Soil" else 89
         st.caption(f"{len(sample_table)} {medium.lower()} sample records (guide total: {expected}).")
+        linked_table = sample_table.copy()
+        id_column = next(
+            (col for col in linked_table.columns if str(col).strip().lower() == "id"),
+            None,
+        )
+        if id_column is not None:
+            linked_table[id_column] = linked_table[id_column].astype(str).map(
+                lambda sid: (
+                    f"?focus_sample={sid}&focus_medium={medium}"
+                )
+            )
+            column_config = {
+                id_column: st.column_config.LinkColumn(
+                    id_column,
+                    help="Click a sample ID to locate it on the Interactive Map.",
+                    display_text=r"focus_sample=([^&]+)",
+                )
+            }
+        else:
+            column_config = {}
+
         st.dataframe(
-            sample_table,
+            linked_table,
             use_container_width=True,
             hide_index=True,
             height=430,
+            column_config=column_config,
         )
 
     st.markdown("---")
@@ -3867,6 +4031,16 @@ def render_project_header() -> None:
 def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
     install_mobile_sidebar_toggle()
+
+    focus_sample = st.query_params.get("focus_sample")
+    focus_medium = st.query_params.get("focus_medium")
+    if focus_sample and focus_medium in {"Soil", "Water"}:
+        st.session_state["active_page"] = "Interactive Map"
+        st.session_state["active_medium"] = focus_medium
+        st.session_state["_focus_sample_id"] = str(focus_sample)
+        st.session_state["_focus_sample_medium"] = focus_medium
+        st.query_params.clear()
+        st.rerun()
 
     with st.sidebar:
         if LOGO_PATH.exists():
