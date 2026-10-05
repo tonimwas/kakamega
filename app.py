@@ -132,6 +132,15 @@ def _encode_png(rgba_image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def prepare_web_overlay(raster_path: str, medium: str):
+    """Return a cached browser-ready PNG plus bounds and metadata."""
+    image_url, bounds, metadata = prepare_web_overlay(raster_path, medium)
+    if image_url is None or bounds is None:
+        return None, bounds, metadata
+    return _encode_png(rgba), bounds, metadata
+
+
 @st.cache_data(show_spinner=False)
 def _admin_lookup_geojson(path_string: str, candidate_fields: tuple[str, ...]) -> dict:
     """Return a compact WGS84 GeoJSON used only for instant browser-side lookup."""
@@ -374,6 +383,7 @@ def persist_upload(uploaded_file, dest: Path) -> str:
     get_raster_src.clear()
     prepare_raster_overlay.clear()
     prepare_water_overlay.clear()
+    prepare_web_overlay.clear()
     return str(dest)
 
 
@@ -949,14 +959,13 @@ def add_raster_overlay(
 def add_single_medium_controls(
     m: folium.Map,
     overlay: ImageOverlay,
-    rgba_image,
+    image_url: str,
     bounds,
     county_bounds,
     sample_layer,
     medium: str,
 ) -> None:
     """Fast browser-only controls for one already-selected medium."""
-    image_url = _encode_png(rgba_image)
     classes = (
         [
             {"rgb": [76, 175, 80], "label": "Safe"},
@@ -1806,7 +1815,7 @@ def page_interactive_map(uploaded_file, medium: str):
     m = create_base_map(county_center_lat, county_center_lon, zoom=10)
 
     overlay = ImageOverlay(
-        image=_encode_png(rgba),
+        image=image_url,
         bounds=bounds,
         opacity=0.7,
         name="Predicted risk",
@@ -1825,7 +1834,7 @@ def page_interactive_map(uploaded_file, medium: str):
     add_single_medium_controls(
         m,
         overlay,
-        rgba,
+        image_url,
         bounds,
         county_bounds,
         sample_layer,
@@ -1876,7 +1885,7 @@ def sample_query_records(medium: str) -> list[dict]:
 
 def add_fast_location_query(
     m: folium.Map,
-    rgba_image,
+    image_url: str,
     bounds,
     county_bounds,
     medium: str,
@@ -2113,7 +2122,7 @@ def add_fast_location_query(
         "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
         "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
         "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
-        "__IMAGE_URL__": json.dumps(_encode_png(rgba_image)),
+        "__IMAGE_URL__": json.dumps(image_url),
         "__SOUTH__": repr(float(bounds[0][0])),
         "__WEST__": repr(float(bounds[0][1])),
         "__NORTH__": repr(float(bounds[1][0])),
@@ -2147,12 +2156,8 @@ def page_check_location(uploaded_file, medium: str):
         st.warning(f"{medium} raster data is not available.")
         return
 
-    rgba, bounds, metadata = (
-        prepare_water_overlay(raster_path)
-        if medium == "Water"
-        else prepare_raster_overlay(raster_path)
-    )
-    if rgba is None or bounds is None:
+    image_url, bounds, metadata = prepare_web_overlay(raster_path, medium)
+    if image_url is None or bounds is None:
         st.error(f"Failed to load {medium.lower()} raster: {metadata.get('error', 'Unknown error')}")
         return
 
@@ -2163,7 +2168,7 @@ def page_check_location(uploaded_file, medium: str):
     m = create_base_map(default_lat, default_lon, zoom=10)
 
     overlay = ImageOverlay(
-        image=_encode_png(rgba),
+        image=image_url,
         bounds=bounds,
         opacity=0.7,
         name="Predicted risk",
@@ -2174,7 +2179,7 @@ def page_check_location(uploaded_file, medium: str):
 
     add_fast_location_query(
         m,
-        rgba,
+        image_url,
         bounds,
         county_bounds,
         medium,
