@@ -16,6 +16,7 @@ from streamlit_folium import st_folium
 from utils.raster_processor import (
     get_raster_src,
     prepare_raster_overlay,
+    prepare_water_overlay,
     raster_map_center,
     sample_raster_value,
 )
@@ -135,6 +136,16 @@ def _admin_lookup_geojson(path_string: str, candidate_fields: tuple[str, ...]) -
         return json.loads(slim.to_json())
     except Exception:
         return {"type": "FeatureCollection", "features": []}
+
+
+@st.cache_data(show_spinner=False)
+def get_county_wgs84_bounds() -> list:
+    """Return Kakamega County bounds as [[south, west], [north, east]]."""
+    gdf = gpd.read_file(COUNTY_GEOJSON)
+    if gdf.crs is not None and str(gdf.crs) != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+    minx, miny, maxx, maxy = gdf.total_bounds
+    return [[float(miny), float(minx)], [float(maxy), float(maxx)]]
 
 
 def add_instant_raster_click(m: folium.Map, rgba_image, bounds, medium: str) -> None:
@@ -340,6 +351,7 @@ def persist_upload(uploaded_file, dest: Path) -> str:
     dest.write_bytes(uploaded_file.getbuffer())
     get_raster_src.clear()
     prepare_raster_overlay.clear()
+    prepare_water_overlay.clear()
     return str(dest)
 
 
@@ -623,6 +635,7 @@ def add_interactive_medium_controls(
     water_overlay: ImageOverlay,
     water_rgba,
     water_bounds,
+    county_bounds,
 ) -> None:
     """Switch Soil/Water, identify pixels, center, and change opacity fully in Leaflet."""
     county_data = _admin_lookup_geojson(
@@ -655,6 +668,10 @@ def add_interactive_medium_controls(
         const waterBounds = L.latLngBounds(
             [__WATER_SOUTH__, __WATER_WEST__],
             [__WATER_NORTH__, __WATER_EAST__]
+        );
+        const countyBounds = L.latLngBounds(
+            [__COUNTY_SOUTH__, __COUNTY_WEST__],
+            [__COUNTY_NORTH__, __COUNTY_EAST__]
         );
 
         const countyData = __COUNTY_DATA__;
@@ -841,7 +858,7 @@ def add_interactive_medium_controls(
                 const container = L.DomUtil.create("div", "leaflet-bar");
                 const btn = L.DomUtil.create("a", "", container);
                 btn.href = "#";
-                btn.title = "Center active raster";
+                btn.title = "Fit Kakamega County";
                 btn.innerHTML = "⌖";
                 btn.style.fontSize = "22px";
                 btn.style.width = "30px";
@@ -851,7 +868,7 @@ def add_interactive_medium_controls(
                 L.DomEvent.disableClickPropagation(container);
                 L.DomEvent.on(btn, "click", function(e) {
                     L.DomEvent.preventDefault(e);
-                    map.fitBounds(activeMedium === "Water" ? waterBounds : soilBounds, {
+                    map.fitBounds(countyBounds, {
                         animate: true,
                         duration: 0.2,
                         padding: [8, 8]
@@ -951,6 +968,10 @@ def add_interactive_medium_controls(
         "__WATER_WEST__": repr(float(water_bounds[0][1])),
         "__WATER_NORTH__": repr(float(water_bounds[1][0])),
         "__WATER_EAST__": repr(float(water_bounds[1][1])),
+        "__COUNTY_SOUTH__": repr(float(county_bounds[0][0])),
+        "__COUNTY_WEST__": repr(float(county_bounds[0][1])),
+        "__COUNTY_NORTH__": repr(float(county_bounds[1][0])),
+        "__COUNTY_EAST__": repr(float(county_bounds[1][1])),
         "__SOIL_URL__": json.dumps(soil_url),
         "__WATER_URL__": json.dumps(water_url),
         "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
@@ -1128,7 +1149,7 @@ def page_interactive_map(uploaded_file):
         center_lat, center_lon = 0.28, 34.75
 
     soil_rgba, soil_bounds, soil_meta = prepare_raster_overlay(soil_path)
-    water_rgba, water_bounds, water_meta = prepare_raster_overlay(water_path)
+    water_rgba, water_bounds, water_meta = prepare_water_overlay(water_path)
 
     if soil_rgba is None or soil_bounds is None:
         st.error(f"Failed to load soil raster: {soil_meta.get('error', 'Unknown error')}")
@@ -1137,7 +1158,10 @@ def page_interactive_map(uploaded_file):
         st.error(f"Failed to load water raster: {water_meta.get('error', 'Unknown error')}")
         return
 
-    m = create_base_map(center_lat, center_lon, zoom=10)
+    county_bounds = get_county_wgs84_bounds()
+    county_center_lat = (county_bounds[0][0] + county_bounds[1][0]) / 2.0
+    county_center_lon = (county_bounds[0][1] + county_bounds[1][1]) / 2.0
+    m = create_base_map(county_center_lat, county_center_lon, zoom=10)
 
     soil_overlay = ImageOverlay(
         image=_encode_png(soil_rgba),
@@ -1163,7 +1187,7 @@ def page_interactive_map(uploaded_file):
     )
     water_overlay.add_to(m)
 
-    m.fit_bounds(soil_bounds)
+    m.fit_bounds(county_bounds)
 
     add_interactive_medium_controls(
         m,
@@ -1173,6 +1197,7 @@ def page_interactive_map(uploaded_file):
         water_overlay,
         water_rgba,
         water_bounds,
+        county_bounds,
     )
 
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
