@@ -667,6 +667,61 @@ def nearest_sample_context(lat: float, lon: float, medium: str) -> dict:
     return best or {"distance_km": None, "sample_id": None, "dominant_metals": "Not available"}
 
 
+def add_sample_point_layer(m: folium.Map, medium: str):
+    """Add only the selected medium's sample layer, initially hidden."""
+    layer = folium.FeatureGroup(
+        name=f"{medium} sample points",
+        show=False,
+        control=False,
+    )
+
+    if medium == "Water":
+        gdf = load_sample_points(str(WATER_SAMPLE_POINTS))
+        class_field = "Safety_cla"
+        color_fn = _water_sample_color
+    else:
+        gdf = load_sample_points(str(SOIL_SAMPLE_POINTS))
+        class_field = "Overall_cl"
+        color_fn = _soil_sample_color
+
+    if not gdf.empty:
+        for _, row in gdf.iterrows():
+            geom = row.geometry
+            if geom is None or geom.is_empty:
+                continue
+
+            sample_id = str(row.get("ID", ""))
+            category = str(row.get(class_field, ""))
+            metals = sample_dominant_metals(sample_id, medium)
+            concentrations = sample_metal_summary_html(sample_id, medium)
+            advice = class_advice(medium, category)
+
+            popup = f"""
+            <div style="font-size:12px;color:#111;min-width:230px;">
+                <strong>{medium} sample: {sample_id}</strong><br>
+                <strong>Coordinates:</strong> {float(geom.y):.6f}, {float(geom.x):.6f}<br>
+                <strong>Class:</strong> {category}<br>
+                <strong>Dominant metal(s):</strong> {metals}<br>
+                <strong>Metal concentrations:</strong><br>{concentrations}<br>
+                <strong>Advice:</strong> {advice}
+            </div>
+            """
+
+            folium.CircleMarker(
+                location=[float(geom.y), float(geom.x)],
+                radius=5,
+                color="#FFFFFF",
+                weight=1.2,
+                fill=True,
+                fill_color=color_fn(category),
+                fill_opacity=0.95,
+                popup=folium.Popup(popup, max_width=320),
+            ).add_to(layer)
+
+    layer.add_to(m)
+    return layer
+
+
 def add_sample_point_layers(m: folium.Map):
     """Add hidden soil and water sample layers with guide-compliant popups."""
     soil_layer = folium.FeatureGroup(name="Soil sample points", show=False, control=False)
@@ -1691,21 +1746,21 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
 
 
 def page_interactive_map(uploaded_file, medium: str):
-    soil_path = str(SOIL_RASTER) if SOIL_RASTER.exists() else None
-    water_path = str(WATER_RASTER) if WATER_RASTER.exists() else None
-
-    if soil_path is None or water_path is None:
-        st.error("Both soil and water raster files are required in data/Raster.")
+    raster_path = resolve_raster_path(
+        medium,
+        uploaded_file if medium == "Soil" else None,
+    )
+    if not raster_path or not Path(raster_path).exists():
+        st.error(f"{medium} raster data is not available.")
         return
 
-    soil_rgba, soil_bounds, soil_meta = prepare_raster_overlay(soil_path)
-    water_rgba, water_bounds, water_meta = prepare_water_overlay(water_path)
-
-    if soil_rgba is None or soil_bounds is None:
-        st.error(f"Failed to load soil raster: {soil_meta.get('error', 'Unknown error')}")
-        return
-    if water_rgba is None or water_bounds is None:
-        st.error(f"Failed to load water raster: {water_meta.get('error', 'Unknown error')}")
+    rgba, bounds, metadata = (
+        prepare_water_overlay(raster_path)
+        if medium == "Water"
+        else prepare_raster_overlay(raster_path)
+    )
+    if rgba is None or bounds is None:
+        st.error(f"Failed to load {medium.lower()} raster: {metadata.get('error', 'Unknown error')}")
         return
 
     county_bounds = get_county_wgs84_bounds()
@@ -1713,50 +1768,34 @@ def page_interactive_map(uploaded_file, medium: str):
     county_center_lon = (county_bounds[0][1] + county_bounds[1][1]) / 2.0
     m = create_base_map(county_center_lat, county_center_lon, zoom=10)
 
-    soil_overlay = ImageOverlay(
-        image=_encode_png(soil_rgba),
-        bounds=soil_bounds,
+    overlay = ImageOverlay(
+        image=_encode_png(rgba),
+        bounds=bounds,
         opacity=0.7,
         name="Predicted risk",
         interactive=False,
         cross_origin=False,
         zindex=1,
-        show=(medium == "Soil"),
-        control=(medium == "Soil"),
+        show=True,
+        control=True,
     )
-    soil_overlay.add_to(m)
-
-    water_overlay = ImageOverlay(
-        image=_encode_png(water_rgba),
-        bounds=water_bounds,
-        opacity=0.7,
-        name="Predicted risk",
-        interactive=False,
-        cross_origin=False,
-        zindex=1,
-        show=(medium == "Water"),
-        control=(medium == "Water"),
-    )
-    water_overlay.add_to(m)
+    overlay.add_to(m)
 
     m.fit_bounds(county_bounds)
 
-    soil_sample_layer, water_sample_layer = add_sample_point_layers(m)
+    sample_layer = add_sample_point_layer(m, medium)
 
-    add_interactive_medium_controls(
+    add_single_medium_controls(
         m,
-        soil_overlay,
-        soil_rgba,
-        soil_bounds,
-        water_overlay,
-        water_rgba,
-        water_bounds,
+        overlay,
+        rgba,
+        bounds,
         county_bounds,
-        soil_sample_layer,
-        water_sample_layer,
-        initial_medium=medium,
+        sample_layer,
+        medium,
     )
 
+    add_map_legend(m, medium)
     folium.LayerControl(collapsed=False, position="topright").add_to(m)
     add_leaflet_internal_css(m)
 
@@ -1770,8 +1809,8 @@ def page_interactive_map(uploaded_file, medium: str):
     )
     st.markdown("</div>", unsafe_allow_html=True)
     st.caption(
-        "Choose Soil or Water in the sidebar to change the layer. "
-        "Use the sample-points eye control, then click a point to see its metal concentrations, class and advice."
+        f"{medium} is selected. Use the sample-points eye control to view "
+        f"{medium.lower()} sample points, then click a point to see its measured metals, class and advice."
     )
 
 
