@@ -135,8 +135,12 @@ def _encode_png(rgba_image) -> str:
 @st.cache_data(show_spinner=False, ttl=3600)
 def prepare_web_overlay(raster_path: str, medium: str):
     """Return a cached browser-ready PNG plus bounds and metadata."""
-    image_url, bounds, metadata = prepare_web_overlay(raster_path, medium)
-    if image_url is None or bounds is None:
+    rgba, bounds, metadata = (
+        prepare_water_overlay(raster_path)
+        if medium == "Water"
+        else prepare_raster_overlay(raster_path)
+    )
+    if rgba is None or bounds is None:
         return None, bounds, metadata
     return _encode_png(rgba), bounds, metadata
 
