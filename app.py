@@ -35,6 +35,9 @@ VECTOR_DIR = ROOT / "data" / "vector"
 WARDS_GEOJSON = VECTOR_DIR / "Wards.geojson"
 CONSTITUENCIES_GEOJSON = VECTOR_DIR / "Constituencies.geojson"
 COUNTY_GEOJSON = VECTOR_DIR / "KakamegaCounty.geojson"
+SAMPLE_POINTS_DIR = VECTOR_DIR / "SamplePoints"
+SOIL_SAMPLE_POINTS = SAMPLE_POINTS_DIR / "Training_data_Soil.shp"
+WATER_SAMPLE_POINTS = SAMPLE_POINTS_DIR / "Training_data_Water.shp"
 
 st.set_page_config(
     page_title="Kakamega Heavy Metal Risk Assessment",
@@ -98,6 +101,18 @@ st.markdown("""
     p {
         margin-top: 0.1rem !important;
         margin-bottom: 0.1rem !important;
+    }
+
+    /* Keep the expanded Leaflet layer control beside the zoom buttons. */
+    .leaflet-top.leaflet-left .leaflet-control-layers {
+        position: absolute !important;
+        left: 44px !important;
+        top: 0 !important;
+        margin: 10px 0 0 0 !important;
+        min-width: 175px;
+        max-height: 220px;
+        overflow-y: auto;
+        background: rgba(255,255,255,0.94);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -423,6 +438,109 @@ def add_vector_layers(m: folium.Map) -> None:
             pass
 
 
+@st.cache_data(show_spinner=False)
+def load_sample_points(path_string: str) -> gpd.GeoDataFrame:
+    """Load sample points in WGS84 for map display and Data Explorer tables."""
+    path = Path(path_string)
+    if not path.exists():
+        return gpd.GeoDataFrame()
+
+    gdf = gpd.read_file(path)
+    if gdf.crs is not None and str(gdf.crs) != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+    return gdf
+
+
+def _soil_sample_color(value) -> str:
+    text = str(value or "").strip().lower()
+    if "heavy" in text:
+        return "#F44336"
+    if "moderate" in text:
+        return "#FF9800"
+    if "slight" in text:
+        return "#FFEB3B"
+    if "clean" in text:
+        return "#4CAF50"
+    return "#9E9E9E"
+
+
+def _water_sample_color(value) -> str:
+    text = str(value or "").strip().lower()
+    if text == "safe":
+        return "#2196F3"
+    if text == "unsafe":
+        return "#FFEB3B"
+    return "#9E9E9E"
+
+
+def add_sample_point_layers(m: folium.Map):
+    """Add hidden soil and water sample layers with class-matched symbols."""
+    soil_layer = folium.FeatureGroup(
+        name="Soil sample points",
+        show=False,
+        control=False,
+    )
+    water_layer = folium.FeatureGroup(
+        name="Water sample points",
+        show=False,
+        control=False,
+    )
+
+    soil_gdf = load_sample_points(str(SOIL_SAMPLE_POINTS))
+    if not soil_gdf.empty:
+        for _, row in soil_gdf.iterrows():
+            geom = row.geometry
+            if geom is None or geom.is_empty:
+                continue
+            sample_id = row.get("ID", "")
+            category = row.get("Overall_cl", "")
+            popup = (
+                "<div style='font-size:12px;color:#111;'>"
+                f"<strong>Soil sample: {sample_id}</strong><br>"
+                f"<strong>Class:</strong> {category}"
+                "</div>"
+            )
+            folium.CircleMarker(
+                location=[float(geom.y), float(geom.x)],
+                radius=5,
+                color="#FFFFFF",
+                weight=1.2,
+                fill=True,
+                fill_color=_soil_sample_color(category),
+                fill_opacity=0.95,
+                popup=folium.Popup(popup, max_width=260),
+            ).add_to(soil_layer)
+
+    water_gdf = load_sample_points(str(WATER_SAMPLE_POINTS))
+    if not water_gdf.empty:
+        for _, row in water_gdf.iterrows():
+            geom = row.geometry
+            if geom is None or geom.is_empty:
+                continue
+            sample_id = row.get("ID", "")
+            category = row.get("Safety_cla", "")
+            popup = (
+                "<div style='font-size:12px;color:#111;'>"
+                f"<strong>Water sample: {sample_id}</strong><br>"
+                f"<strong>Safety:</strong> {category}"
+                "</div>"
+            )
+            folium.CircleMarker(
+                location=[float(geom.y), float(geom.x)],
+                radius=5,
+                color="#FFFFFF",
+                weight=1.2,
+                fill=True,
+                fill_color=_water_sample_color(category),
+                fill_opacity=0.95,
+                popup=folium.Popup(popup, max_width=260),
+            ).add_to(water_layer)
+
+    soil_layer.add_to(m)
+    water_layer.add_to(m)
+    return soil_layer, water_layer
+
+
 def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> folium.Map:
     m = folium.Map(
         location=[center_lat, center_lon],
@@ -517,6 +635,58 @@ def add_map_controls(
             [__SOUTH__, __WEST__],
             [__NORTH__, __EAST__]
         );
+
+        const SampleToggleControl = L.Control.extend({
+            options: {position: "topleft"},
+            onAdd: function() {
+                const container = L.DomUtil.create(
+                    "div",
+                    "kakamega-sample-toggle"
+                );
+                container.title = "Show or hide sample points";
+                container.style.display = "flex";
+                container.style.alignItems = "center";
+                container.style.gap = "7px";
+                container.style.background = "rgba(255,255,255,0.92)";
+                container.style.color = "#222";
+                container.style.padding = "5px 9px";
+                container.style.borderRadius = "4px";
+                container.style.boxShadow = "0 1px 5px rgba(0,0,0,0.35)";
+                container.style.cursor = "pointer";
+                container.style.fontSize = "12px";
+                container.style.fontWeight = "600";
+                container.style.whiteSpace = "nowrap";
+                container.style.opacity = "0.68";
+
+                const iconWrap = L.DomUtil.create("span", "", container);
+                iconWrap.style.width = "19px";
+                iconWrap.style.height = "14px";
+                iconWrap.style.position = "relative";
+                iconWrap.innerHTML =
+                    '<svg class="sample-eye-svg" width="19" height="14" viewBox="0 0 24 18" aria-hidden="true">' +
+                    '<path d="M1 9C4.2 3.8 7.8 1.5 12 1.5S19.8 3.8 23 9c-3.2 5.2-6.8 7.5-11 7.5S4.2 14.2 1 9Z" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+                    '<circle cx="12" cy="9" r="3.2" fill="currentColor"/>' +
+                    '</svg>' +
+                    '<span class="sample-eye-slash" style="position:absolute;left:8px;top:-3px;width:2px;height:20px;background:currentColor;transform:rotate(-45deg);transform-origin:center;"></span>';
+
+                const label = L.DomUtil.create("span", "sample-toggle-label", container);
+                label.textContent = "View soil sample points";
+
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.on(container, "click", function(e) {
+                    L.DomEvent.preventDefault(e);
+                    samplePointsVisible = !samplePointsVisible;
+                    removeBothSampleLayers();
+                    if (samplePointsVisible) {
+                        sampleLayerForActiveMedium().addTo(map);
+                    }
+                    updateSampleToggle();
+                });
+
+                return container;
+            }
+        });
+        map.addControl(new SampleToggleControl());
 
         const CenterControl = L.Control.extend({
             options: { position: "topleft" },
@@ -636,6 +806,8 @@ def add_interactive_medium_controls(
     water_rgba,
     water_bounds,
     county_bounds,
+    soil_sample_layer,
+    water_sample_layer,
 ) -> None:
     """Switch Soil/Water, identify pixels, center, and change opacity fully in Leaflet."""
     county_data = _admin_lookup_geojson(
@@ -660,6 +832,8 @@ def add_interactive_medium_controls(
         const map = {{ this._parent.get_name() }};
         const soilOverlay = __SOIL_OVERLAY__;
         const waterOverlay = __WATER_OVERLAY__;
+        const soilSamples = __SOIL_SAMPLE_LAYER__;
+        const waterSamples = __WATER_SAMPLE_LAYER__;
 
         const soilBounds = L.latLngBounds(
             [__SOIL_SOUTH__, __SOIL_WEST__],
@@ -691,6 +865,7 @@ def add_interactive_medium_controls(
 
         let activeMedium = "Soil";
         let currentOpacity = 0.7;
+        let samplePointsVisible = false;
 
         function makeCanvas(url) {
             const image = new Image();
@@ -804,8 +979,39 @@ def add_interactive_medium_controls(
             }
         }
 
+        function sampleLayerForActiveMedium() {
+            return activeMedium === "Water" ? waterSamples : soilSamples;
+        }
+
+        function removeBothSampleLayers() {
+            if (map.hasLayer(soilSamples)) map.removeLayer(soilSamples);
+            if (map.hasLayer(waterSamples)) map.removeLayer(waterSamples);
+        }
+
+        function updateSampleToggle() {
+            const btn = document.querySelector(".kakamega-sample-toggle");
+            if (!btn) return;
+
+            const mediumName = activeMedium.toLowerCase();
+            const eye = btn.querySelector(".sample-eye-svg");
+            const slash = btn.querySelector(".sample-eye-slash");
+            const label = btn.querySelector(".sample-toggle-label");
+
+            if (samplePointsVisible) {
+                btn.style.opacity = "1";
+                if (slash) slash.style.display = "none";
+                if (label) label.textContent = "Hide " + mediumName + " sample points";
+            } else {
+                btn.style.opacity = "0.68";
+                if (slash) slash.style.display = "block";
+                if (label) label.textContent = "View " + mediumName + " sample points";
+            }
+        }
+
         function setMedium(medium) {
             activeMedium = medium;
+            samplePointsVisible = false;
+            removeBothSampleLayers();
             if (medium === "Water") {
                 if (map.hasLayer(soilOverlay)) map.removeLayer(soilOverlay);
                 if (!map.hasLayer(waterOverlay)) waterOverlay.addTo(map);
@@ -821,6 +1027,7 @@ def add_interactive_medium_controls(
                 btn.style.background = active ? "#ff4b4b" : "rgba(255,255,255,0.92)";
                 btn.style.color = active ? "#fff" : "#222";
             });
+            updateSampleToggle();
             map.closePopup();
         }
 
@@ -960,6 +1167,8 @@ def add_interactive_medium_controls(
     replacements = {
         "__SOIL_OVERLAY__": soil_overlay.get_name(),
         "__WATER_OVERLAY__": water_overlay.get_name(),
+        "__SOIL_SAMPLE_LAYER__": soil_sample_layer.get_name(),
+        "__WATER_SAMPLE_LAYER__": water_sample_layer.get_name(),
         "__SOIL_SOUTH__": repr(float(soil_bounds[0][0])),
         "__SOIL_WEST__": repr(float(soil_bounds[0][1])),
         "__SOIL_NORTH__": repr(float(soil_bounds[1][0])),
@@ -1189,6 +1398,8 @@ def page_interactive_map(uploaded_file):
 
     m.fit_bounds(county_bounds)
 
+    soil_sample_layer, water_sample_layer = add_sample_point_layers(m)
+
     add_interactive_medium_controls(
         m,
         soil_overlay,
@@ -1198,9 +1409,11 @@ def page_interactive_map(uploaded_file):
         water_rgba,
         water_bounds,
         county_bounds,
+        soil_sample_layer,
+        water_sample_layer,
     )
 
-    folium.LayerControl(collapsed=True, position="topright").add_to(m)
+    folium.LayerControl(collapsed=False, position="topleft").add_to(m)
 
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
@@ -1269,6 +1482,80 @@ def page_data_explorer(uploaded_file):
             st.write("**WGS84 overlay bounds**")
             st.write(f"- South, West: {bounds[0][0]:.5f}, {bounds[0][1]:.5f}")
             st.write(f"- North, East: {bounds[1][0]:.5f}, {bounds[1][1]:.5f}")
+
+    st.markdown("---")
+    st.subheader("Sample points")
+
+    soil_tab, water_tab = st.tabs(["Soil samples", "Water samples"])
+
+    with soil_tab:
+        soil_samples = load_sample_points(str(SOIL_SAMPLE_POINTS))
+        if soil_samples.empty:
+            st.info("No soil sample points are available.")
+        else:
+            soil_table = soil_samples.drop(columns="geometry", errors="ignore").copy()
+            soil_table = soil_table.rename(
+                columns={
+                    "LATITUDE": "Latitude",
+                    "Longitude": "Longitude",
+                    "Elevation_": "Elevation",
+                    "Land_use": "Land use",
+                    "Soil_type": "Soil type",
+                    "Clay_perce": "Clay (%)",
+                    "SOC_percen": "SOC (%)",
+                    "Soil_pH": "Soil pH",
+                    "Overall_cl": "Contamination class",
+                }
+            )
+            numeric_cols = soil_table.select_dtypes(include="number").columns
+            soil_table[numeric_cols] = soil_table[numeric_cols].round(3)
+            preferred = [
+                "ID", "Latitude", "Longitude", "Elevation", "Land use",
+                "Soil type", "Clay (%)", "SOC (%)", "Soil pH",
+                "Contamination class",
+            ]
+            remaining = [col for col in soil_table.columns if col not in preferred]
+            soil_table = soil_table[[col for col in preferred if col in soil_table.columns] + remaining]
+            st.caption(f"{len(soil_table)} soil sample points")
+            st.dataframe(
+                soil_table,
+                use_container_width=True,
+                hide_index=True,
+                height=420,
+            )
+
+    with water_tab:
+        water_samples = load_sample_points(str(WATER_SAMPLE_POINTS))
+        if water_samples.empty:
+            st.info("No water sample points are available.")
+        else:
+            water_table = water_samples.drop(columns="geometry", errors="ignore").copy()
+            water_table = water_table.rename(
+                columns={
+                    "Latitude": "Latitude",
+                    "Longitude": "Longitude",
+                    "Elevation_": "Elevation",
+                    "Land_use": "Land use",
+                    "Water_type": "Water type",
+                    "Safety_cla": "Safety class",
+                    "value": "Class value",
+                }
+            )
+            numeric_cols = water_table.select_dtypes(include="number").columns
+            water_table[numeric_cols] = water_table[numeric_cols].round(3)
+            preferred = [
+                "ID", "Latitude", "Longitude", "Elevation", "Land use",
+                "Water type", "Safety class", "Class value",
+            ]
+            remaining = [col for col in water_table.columns if col not in preferred]
+            water_table = water_table[[col for col in preferred if col in water_table.columns] + remaining]
+            st.caption(f"{len(water_table)} water sample points")
+            st.dataframe(
+                water_table,
+                use_container_width=True,
+                hide_index=True,
+                height=420,
+            )
 
 
 def page_model_results():
