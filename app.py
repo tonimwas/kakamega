@@ -3240,123 +3240,83 @@ def add_map_loading_overlay(
 
 
 def install_mobile_sidebar_toggle() -> None:
-    """Keep a stable mobile hamburger that reopens Streamlit's native sidebar."""
+    """Expose Streamlit's native collapsed-sidebar control reliably on mobile."""
     html = """
     <script>
     (function() {
         const doc = window.parent.document;
         const win = window.parent;
 
-        function ensureStyle() {
-            if (doc.getElementById('kakamega-mobile-menu-style')) return;
-            const style = doc.createElement('style');
+        const oldCustom = doc.getElementById('kakamega-mobile-menu-btn');
+        if (oldCustom) oldCustom.remove();
+
+        let style = doc.getElementById('kakamega-mobile-menu-style');
+        if (!style) {
+            style = doc.createElement('style');
             style.id = 'kakamega-mobile-menu-style';
-            style.textContent =
-                '#kakamega-mobile-menu-btn{' +
-                'position:fixed;left:10px;top:10px;z-index:2147482500;' +
-                'width:36px;height:36px;border:1px solid rgba(255,255,255,.22);' +
-                'border-radius:7px;background:rgba(14,17,23,.9);color:#fff;' +
-                'display:none;align-items:center;justify-content:center;' +
-                'font-size:20px;line-height:1;cursor:pointer;touch-action:manipulation;' +
-                'box-shadow:0 2px 8px rgba(0,0,0,.28);backdrop-filter:blur(3px);' +
-                '-webkit-tap-highlight-color:transparent;' +
-                '}' +
-                '#kakamega-mobile-menu-btn:active{transform:scale(.96);}' +
-                '@media (max-width:768px){#kakamega-mobile-menu-btn{display:flex !important;}}';
             doc.head.appendChild(style);
         }
 
-        function collapsedControl() {
-            return (
-                doc.querySelector('[data-testid="stSidebarCollapsedControl"] button') ||
-                doc.querySelector('[data-testid="stSidebarCollapsedControl"]') ||
-                doc.querySelector('[data-testid*="SidebarCollapsed"] button') ||
-                doc.querySelector('[data-testid*="SidebarCollapsed"]')
-            );
-        }
+        style.textContent =
+            '@media (max-width:768px){' +
+            '[data-testid="stSidebarCollapsedControl"],' +
+            '[data-testid*="SidebarCollapsed"]{' +
+            'display:flex !important;' +
+            'visibility:visible !important;' +
+            'opacity:1 !important;' +
+            'position:fixed !important;' +
+            'left:10px !important;' +
+            'top:10px !important;' +
+            'z-index:2147482500 !important;' +
+            'pointer-events:auto !important;' +
+            '}' +
+            '[data-testid="stSidebarCollapsedControl"] button,' +
+            '[data-testid*="SidebarCollapsed"] button{' +
+            'width:36px !important;' +
+            'height:36px !important;' +
+            'min-width:36px !important;' +
+            'min-height:36px !important;' +
+            'padding:0 !important;' +
+            'border-radius:7px !important;' +
+            'border:1px solid rgba(255,255,255,.22) !important;' +
+            'background:rgba(14,17,23,.9) !important;' +
+            'color:#fff !important;' +
+            'box-shadow:0 2px 8px rgba(0,0,0,.28) !important;' +
+            'touch-action:manipulation !important;' +
+            '-webkit-tap-highlight-color:transparent !important;' +
+            'pointer-events:auto !important;' +
+            '}' +
+            '}';
 
-        function nativeOpenButton() {
-            const direct = collapsedControl();
-            if (direct) return direct;
+        function makeNativeControlTouchable() {
+            const controls = Array.from(doc.querySelectorAll(
+                '[data-testid="stSidebarCollapsedControl"],[data-testid*="SidebarCollapsed"]'
+            ));
 
-            const candidates = Array.from(doc.querySelectorAll('button'));
-            return candidates.find(function(btn) {
-                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                const title = (btn.getAttribute('title') || '').toLowerCase();
-                const testid = (btn.getAttribute('data-testid') || '').toLowerCase();
-                return (
-                    aria.includes('open sidebar') ||
-                    aria.includes('expand sidebar') ||
-                    title.includes('open sidebar') ||
-                    title.includes('expand sidebar') ||
-                    testid.includes('sidebarcollapsed')
-                );
-            }) || null;
-        }
-
-        function clickNativeControl() {
-            const control = nativeOpenButton();
-            if (!control) return;
-
-            const clickable =
-                control.matches && control.matches('button')
-                    ? control
-                    : control.querySelector && control.querySelector('button')
-                        ? control.querySelector('button')
-                        : control;
-
-            try {
-                clickable.click();
-            } catch (e) {
-                try {
-                    clickable.dispatchEvent(new MouseEvent('click', {
-                        bubbles: true,
-                        cancelable: true,
-                        view: win
-                    }));
-                } catch (_) {}
+            for (const control of controls) {
+                control.style.pointerEvents = 'auto';
+                const btn = control.querySelector('button');
+                if (btn) {
+                    btn.style.pointerEvents = 'auto';
+                    btn.style.touchAction = 'manipulation';
+                }
             }
         }
 
-        ensureStyle();
+        makeNativeControlTouchable();
 
-        let btn = doc.getElementById('kakamega-mobile-menu-btn');
-        if (!btn) {
-            btn = doc.createElement('button');
-            btn.id = 'kakamega-mobile-menu-btn';
-            btn.type = 'button';
-            btn.setAttribute('aria-label', 'Open navigation menu');
-            btn.setAttribute('title', 'Open navigation menu');
-            btn.innerHTML = '&#9776;';
-            doc.body.appendChild(btn);
+        if (win.__kakamegaNativeSidebarObserver) {
+            try { win.__kakamegaNativeSidebarObserver.disconnect(); } catch (e) {}
         }
 
-        btn.onclick = function(event) {
-            event.preventDefault();
-            event.stopPropagation();
-            clickNativeControl();
-        };
-
-        btn.ontouchend = function(event) {
-            event.preventDefault();
-            event.stopPropagation();
-            clickNativeControl();
-        };
-
-        // Keep the custom button present on mobile at all times.
-        // Streamlit itself owns opening/closing and sidebar layout.
-        function syncVisibility() {
-            const mobile = win.matchMedia('(max-width:768px)').matches;
-            btn.style.display = mobile ? 'flex' : 'none';
-        }
-
-        if (win.__kakamegaSidebarResize) {
-            win.removeEventListener('resize', win.__kakamegaSidebarResize);
-        }
-        win.__kakamegaSidebarResize = syncVisibility;
-        win.addEventListener('resize', syncVisibility);
-
-        syncVisibility();
+        const observer = new MutationObserver(function() {
+            makeNativeControlTouchable();
+        });
+        observer.observe(doc.body, {
+            childList: true,
+            subtree: true
+        });
+        win.__kakamegaNativeSidebarObserver = observer;
     })();
     </script>
     """
