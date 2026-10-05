@@ -2135,6 +2135,77 @@ def add_fast_location_query(
 
         body.appendChild(panel);
 
+        const responsiveStyle = document.createElement("style");
+        responsiveStyle.textContent =
+            '@media (max-width: 768px){' +
+            '.kakamega-location-panel{' +
+            'padding:10px !important;' +
+            'border-left:0 !important;' +
+            'border-top:1px solid #343640 !important;' +
+            '}' +
+            '.kakamega-location-panel input{' +
+            'padding:5px !important;' +
+            'margin-top:1px !important;' +
+            'margin-bottom:5px !important;' +
+            'font-size:14px !important;' +
+            '}' +
+            '.kakamega-location-panel button{' +
+            'padding:6px !important;' +
+            'font-size:13px !important;' +
+            '}' +
+            '#query-result{' +
+            'margin-top:8px !important;' +
+            'font-size:11px !important;' +
+            'line-height:1.28 !important;' +
+            '}' +
+            '}';
+        document.head.appendChild(responsiveStyle);
+
+        function applyResponsiveLocationLayout() {
+            const mobile = window.innerWidth <= 768;
+
+            if (mobile) {
+                mapEl.style.left = "0";
+                mapEl.style.top = "0";
+                mapEl.style.right = "0";
+                mapEl.style.bottom = "auto";
+                mapEl.style.width = "100%";
+                mapEl.style.height = "42%";
+
+                panel.style.left = "0";
+                panel.style.right = "0";
+                panel.style.top = "42%";
+                panel.style.bottom = "0";
+                panel.style.width = "100%";
+                panel.style.height = "58%";
+                panel.style.borderLeft = "0";
+                panel.style.borderTop = "1px solid #343640";
+            } else {
+                mapEl.style.left = "0";
+                mapEl.style.top = "0";
+                mapEl.style.right = "auto";
+                mapEl.style.bottom = "0";
+                mapEl.style.width = "calc(100% - 300px)";
+                mapEl.style.height = "100%";
+
+                panel.style.left = "auto";
+                panel.style.right = "0";
+                panel.style.top = "0";
+                panel.style.bottom = "0";
+                panel.style.width = "290px";
+                panel.style.height = "100%";
+                panel.style.borderLeft = "1px solid #343640";
+                panel.style.borderTop = "0";
+            }
+
+            requestAnimationFrame(function() {
+                map.invalidateSize(false);
+            });
+        }
+
+        applyResponsiveLocationLayout();
+        window.addEventListener("resize", applyResponsiveLocationLayout);
+
         const image = new Image();
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d", {willReadFrequently:true});
@@ -2315,10 +2386,15 @@ def add_fast_location_query(
             map.panTo([lat,lng]);
         });
 
+        applyResponsiveLocationLayout();
         map.fitBounds(countyBounds);
         requestAnimationFrame(function() {
             map.invalidateSize(false);
-            setTimeout(function(){ map.invalidateSize(false); }, 120);
+            setTimeout(function(){
+                applyResponsiveLocationLayout();
+                map.invalidateSize(false);
+                map.fitBounds(countyBounds, {padding:[8,8]});
+            }, 120);
         });
     })();
     {% endmacro %}
