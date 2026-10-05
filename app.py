@@ -3240,7 +3240,7 @@ def add_map_loading_overlay(
 
 
 def install_mobile_sidebar_toggle() -> None:
-    """Keep a working mobile hamburger visible so a collapsed sidebar can be reopened."""
+    """Keep a stable mobile hamburger that reopens Streamlit's native sidebar."""
     html = """
     <script>
     (function() {
@@ -3262,26 +3262,8 @@ def install_mobile_sidebar_toggle() -> None:
                 '-webkit-tap-highlight-color:transparent;' +
                 '}' +
                 '#kakamega-mobile-menu-btn:active{transform:scale(.96);}' +
-                '@media (max-width: 768px){#kakamega-mobile-menu-btn{display:flex;}}';
+                '@media (max-width:768px){#kakamega-mobile-menu-btn{display:flex !important;}}';
             doc.head.appendChild(style);
-        }
-
-        function sidebar() {
-            return doc.querySelector('[data-testid="stSidebar"]');
-        }
-
-        function sidebarIsOpen() {
-            const sb = sidebar();
-            if (!sb) return false;
-            const r = sb.getBoundingClientRect();
-            const cs = win.getComputedStyle(sb);
-            return (
-                r.width > 80 &&
-                r.right > 4 &&
-                cs.visibility !== 'hidden' &&
-                cs.display !== 'none' &&
-                cs.opacity !== '0'
-            );
         }
 
         function collapsedControl() {
@@ -3302,23 +3284,19 @@ def install_mobile_sidebar_toggle() -> None:
                 const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
                 const title = (btn.getAttribute('title') || '').toLowerCase();
                 const testid = (btn.getAttribute('data-testid') || '').toLowerCase();
-                const text = (btn.innerText || '').trim().toLowerCase();
                 return (
                     aria.includes('open sidebar') ||
                     aria.includes('expand sidebar') ||
-                    aria.includes('sidebar') ||
                     title.includes('open sidebar') ||
                     title.includes('expand sidebar') ||
-                    title.includes('sidebar') ||
-                    testid.includes('sidebar') ||
-                    text === '☰'
+                    testid.includes('sidebarcollapsed')
                 );
             }) || null;
         }
 
-        function clickNativeOpenControl() {
+        function clickNativeControl() {
             const control = nativeOpenButton();
-            if (!control) return false;
+            if (!control) return;
 
             const clickable =
                 control.matches && control.matches('button')
@@ -3328,50 +3306,16 @@ def install_mobile_sidebar_toggle() -> None:
                         : control;
 
             try {
-                clickable.dispatchEvent(new PointerEvent('pointerdown', {
-                    bubbles: true,
-                    cancelable: true,
-                    pointerType: 'touch'
-                }));
-            } catch (e) {}
-
-            try {
-                clickable.dispatchEvent(new MouseEvent('mousedown', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: win
-                }));
-                clickable.dispatchEvent(new MouseEvent('mouseup', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: win
-                }));
                 clickable.click();
             } catch (e) {
-                try { clickable.click(); } catch (_) {}
+                try {
+                    clickable.dispatchEvent(new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: win
+                    }));
+                } catch (_) {}
             }
-
-            return true;
-        }
-
-        function forceSidebarVisible() {
-            const sb = sidebar();
-            if (!sb) return false;
-
-            sb.style.setProperty('transform', 'translateX(0)', 'important');
-            sb.style.setProperty('left', '0', 'important');
-            sb.style.setProperty('visibility', 'visible', 'important');
-            sb.style.setProperty('display', 'block', 'important');
-            sb.style.setProperty('opacity', '1', 'important');
-            sb.style.setProperty('z-index', '2147482600', 'important');
-
-            const inner = sb.querySelector('[data-testid="stSidebarContent"]');
-            if (inner) {
-                inner.style.setProperty('visibility', 'visible', 'important');
-                inner.style.setProperty('opacity', '1', 'important');
-            }
-
-            return true;
         }
 
         ensureStyle();
@@ -3387,54 +3331,32 @@ def install_mobile_sidebar_toggle() -> None:
             doc.body.appendChild(btn);
         }
 
-        function openMenu(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
+        btn.onclick = function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            clickNativeControl();
+        };
 
-            if (sidebarIsOpen()) return;
+        btn.ontouchend = function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            clickNativeControl();
+        };
 
-            const usedNative = clickNativeOpenControl();
-
-            setTimeout(function() {
-                if (!sidebarIsOpen()) {
-                    forceSidebarVisible();
-                }
-                sync();
-            }, usedNative ? 120 : 20);
+        // Keep the custom button present on mobile at all times.
+        // Streamlit itself owns opening/closing and sidebar layout.
+        function syncVisibility() {
+            const mobile = win.matchMedia('(max-width:768px)').matches;
+            btn.style.display = mobile ? 'flex' : 'none';
         }
-
-        btn.onclick = openMenu;
-        btn.ontouchend = openMenu;
-
-        function sync() {
-            const mobile = win.matchMedia('(max-width: 768px)').matches;
-            btn.style.display = (mobile && !sidebarIsOpen()) ? 'flex' : 'none';
-        }
-
-        if (win.__kakamegaSidebarObserver) {
-            try { win.__kakamegaSidebarObserver.disconnect(); } catch (e) {}
-        }
-
-        const observer = new MutationObserver(function() {
-            requestAnimationFrame(sync);
-        });
-        observer.observe(doc.body, {
-            attributes: true,
-            childList: true,
-            subtree: true,
-            attributeFilter: ['style', 'class', 'aria-expanded']
-        });
-        win.__kakamegaSidebarObserver = observer;
 
         if (win.__kakamegaSidebarResize) {
             win.removeEventListener('resize', win.__kakamegaSidebarResize);
         }
-        win.__kakamegaSidebarResize = sync;
-        win.addEventListener('resize', sync);
+        win.__kakamegaSidebarResize = syncVisibility;
+        win.addEventListener('resize', syncVisibility);
 
-        sync();
+        syncVisibility();
     })();
     </script>
     """
