@@ -2789,55 +2789,58 @@ def add_map_loading_overlay(
         mapEl.appendChild(loader);
 
         let mapReady = false;
-        let pending = 0;
         let removed = false;
 
-        function maybeRemove() {
-            if (removed || !mapReady || pending > 0) return;
-            removed = true;
-            requestAnimationFrame(function() {
-                setTimeout(function() {
-                    loader.style.opacity = "0";
-                    loader.style.transition = "opacity 160ms ease";
-                    setTimeout(function() {
-                        if (loader.parentNode) loader.parentNode.removeChild(loader);
-                    }, 170);
-                }, 80);
+        function allVisibleMapImagesLoaded() {
+            const tileImages = Array.from(
+                mapEl.querySelectorAll("img.leaflet-tile")
+            ).filter(function(img) {
+                return img.style.display !== "none";
             });
+
+            const rasterImg = rasterOverlay._image;
+
+            // Do not clear the loader before Leaflet has created its visible
+            // basemap tiles and the prediction image.
+            if (tileImages.length === 0 || !rasterImg) return false;
+
+            const tilesReady = tileImages.every(function(img) {
+                return img.complete;
+            });
+            const rasterReady = rasterImg.complete;
+
+            return tilesReady && rasterReady;
         }
 
-        function waitForLayer(layer) {
-            if (!map.hasLayer(layer)) return;
+        function removeLoaderWhenComplete() {
+            if (removed || !mapReady || !allVisibleMapImagesLoaded()) return;
 
-            if (layer instanceof L.TileLayer) {
-                if (!layer._loading) return;
-                pending += 1;
-                layer.once("load", function() {
-                    pending -= 1;
-                    maybeRemove();
-                });
-                return;
-            }
-
-            if (layer instanceof L.ImageOverlay) {
-                const img = layer._image;
-                if (img && img.complete && img.naturalWidth > 0) return;
-                pending += 1;
-                layer.once("load", function() {
-                    pending -= 1;
-                    maybeRemove();
-                });
-            }
+            removed = true;
+            loader.style.transition = "opacity 180ms ease";
+            loader.style.opacity = "0";
+            setTimeout(function() {
+                if (loader.parentNode) loader.parentNode.removeChild(loader);
+            }, 190);
         }
-
-        map.eachLayer(function(layer) {
-            if (layer instanceof L.TileLayer) waitForLayer(layer);
-        });
-        waitForLayer(rasterOverlay);
 
         map.whenReady(function() {
             mapReady = true;
-            maybeRemove();
+
+            const readinessTimer = setInterval(function() {
+                removeLoaderWhenComplete();
+                if (removed) clearInterval(readinessTimer);
+            }, 60);
+
+            // Recheck after tile/raster load events as well, so the loader
+            // disappears immediately once the final visible image completes.
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.TileLayer) {
+                    layer.on("load", removeLoaderWhenComplete);
+                }
+            });
+            rasterOverlay.on("load", removeLoaderWhenComplete);
+
+            requestAnimationFrame(removeLoaderWhenComplete);
         });
     })();
     {% endmacro %}
