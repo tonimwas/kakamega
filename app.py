@@ -1851,7 +1851,7 @@ def page_interactive_map(uploaded_file, medium: str):
         width="stretch",
         height=600,
         returned_objects=[],
-        key=f"kakamega-map-{medium.lower()}",
+        key="kakamega-map",
     )
     st.markdown("</div>", unsafe_allow_html=True)
     st.caption(
@@ -2193,7 +2193,7 @@ def page_check_location(uploaded_file, medium: str):
         width="stretch",
         height=470,
         returned_objects=[],
-        key=f"check-location-{medium.lower()}",
+        key="check-location",
     )
 
 
