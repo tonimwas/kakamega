@@ -1955,62 +1955,145 @@ def page_model_results(medium: str):
 
         st.caption("Classified against WHO drinking-water guidelines and NEMA guidelines for zinc.")
 
-def page_methodology():
-    st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
+def page_methodology(medium: str):
     st.header("Methodology")
-    st.subheader("Data collection")
-    st.write("Soil and water samples were assessed around artisanal gold mining sites in Kakamega County and mapped as classified prediction rasters.")
-    st.subheader("Prediction and mapping")
-    st.write("A machine-learning surface was interpolated / classified and stored as a GeoTIFF. The portal reprojects that grid to WGS84 only for display.")
-    st.subheader("Risk classification")
     st.markdown(
         """
-        The soil raster uses four contamination classes, while the water raster uses two safety classes:
+        **Data.** Published soil and water heavy metal data (Hg, As, Pb, Cd, Cr, Cu, Zn, Ni) from
+        artisanal gold mining sites in Kakamega County, compiled from peer-reviewed studies.
+        No new field sampling was done.
 
-        | Medium | Class | Category |
-        | --- | --- | --- |
-        | Soil | 1 | Clean |
-        | Soil | 2 | Slightly contaminated |
-        | Soil | 3 | Moderate |
-        | Soil | 4 | Heavy contamination |
-        | Water | 1 | Safe |
-        | Water | 2 | Unsafe |
+        **Classification.** Soil is classed as Clean, Slight, Moderate or Heavy against CCME soil
+        quality guidelines. Water is classed as Safe or Unsafe against WHO drinking-water guidelines
+        and NEMA drinking water guidelines for zinc only.
+
+        **Steps.** Compile data, classify, derive GIS predictors (elevation, rainfall, temperature,
+        distance to mines and waste sites), train and compare models, choose the best model, validate,
+        predict across a grid, build the map.
+
+        **Models.** XGBoost for soil and Random Forest for water. Class imbalance was handled by
+        oversampling the training folds only.
+
+        **Validation.** Soil: 5-fold stratified cross-validation. Water: spatial cross-validation.
+
+        **Limitations.** Small samples, strong class imbalance, sampling clustered around known mining
+        areas, secondary data only, and some metals (e.g. mercury in water) not measured at some sites.
         """
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
+    if medium == "Soil":
+        st.info("Selected medium: Soil · XGBoost · CCME agriculture soil quality guidelines")
+    else:
+        st.info("Selected medium: Water · Random Forest · WHO drinking-water guidelines and NEMA zinc guideline")
 
 def page_about():
-    st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
-    st.header("About the project")
-    st.write(
-        "Artisanal gold mining in Kakamega County has raised concerns about heavy metal "
-        "contamination of soils and water. This portal publishes the spatial prediction so that "
-        "a location can be queried without desktop GIS software."
+    st.header("About the Project")
+    st.markdown(
+        """
+        **Aim.** To predict and map the spatial distribution of heavy metal contamination in soil and
+        water around artisanal gold mining sites in Kakamega County using machine learning.
+
+        **Objectives.**
+        1. To identify the environmental and spatial predictors, including distance from mining and
+           waste-disposal points, elevation, rainfall, temperature and soil properties, most strongly
+           associated with contamination levels.
+        2. To develop and validate machine learning models for soil and for water that predict
+           contamination levels around artisanal small scale mines in Kakamega county.
+        3. To design an interactive map of predicted contamination zones and an accompanying
+           application for continuous monitoring.
+
+        **Why it matters.** Heavy metal contamination has been documented at several artisanal gold
+        mining sites in Kakamega County, but no study has combined this evidence into one spatially
+        continuous assessment. Communities, county authorities and researchers have had no way to
+        check contamination risk at a location before deciding on farming, water sourcing or
+        mine-site management. This app fills that gap.
+
+        **Study area.** Kakamega County lies in western Kenya, covers about 3,034 km² at 1,240 to
+        2,000 m above sea level and forms part of the Lake Victoria Goldfields greenstone belt,
+        where artisanal gold mining has taken place since the 1930s.
+
+        **Researcher:** Susan Wambui Mungai, BSc Geology  
+        **Supervisor:** Dr. Patrick Gevera  
+        **University:** Dedan Kimathi University of Technology
+
+        **Key references.** Ondayo et al. (2023); Meso et al. (2025); King et al. (2024);
+        Christine et al. (2018); Omondi & Boitt (2020).
+        """
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
+    st.subheader("Study area map")
+    county_bounds = get_county_wgs84_bounds()
+    center_lat = (county_bounds[0][0] + county_bounds[1][0]) / 2
+    center_lon = (county_bounds[0][1] + county_bounds[1][1]) / 2
+    m = create_base_map(center_lat, center_lon, zoom=9)
+    m.fit_bounds(county_bounds)
+    st_folium(m, width="stretch", height=360, returned_objects=[], key="about-study-area")
 
-def page_statistics():
-    st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
-    st.header("Key statistics")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("County area (approx.)", "3,224 km²")
-    c2.metric("Soil grid size", "884 × 695")
-    c3.metric("Cell size", "100 m")
-    c4.metric("Risk classes", "4")
-    st.caption("Grid statistics are read from the soil GeoTIFF currently in `data/Raster/Training_raster.tif`.")
-    st.markdown("</div>", unsafe_allow_html=True)
+def page_statistics(medium: str):
+    st.header("Key Statistics")
 
+    if medium == "Soil":
+        values = [
+            ("Samples", "122"),
+            ("Metals", "8"),
+            ("Classes", "4"),
+            ("Model", "XGBoost"),
+            ("Accuracy", "76.2%"),
+            ("Macro F1", "0.57"),
+        ]
+        cols = st.columns(3)
+        for i, (label, value) in enumerate(values):
+            cols[i % 3].metric(label, value)
+        if SOIL_CLASS_CHART.exists():
+            st.image(str(SOIL_CLASS_CHART), caption="Soil samples per contamination class", use_container_width=True)
+    else:
+        values = [
+            ("Samples evaluated", "89"),
+            ("Metals", "8"),
+            ("Classes", "2"),
+            ("Model", "Random Forest"),
+            ("Accuracy", "79.8%"),
+            ("Macro F1", "0.77"),
+        ]
+        cols = st.columns(3)
+        for i, (label, value) in enumerate(values):
+            cols[i % 3].metric(label, value)
+        if WATER_CLASS_CHART.exists():
+            st.image(str(WATER_CLASS_CHART), caption="Water samples per class", use_container_width=True)
 
 def page_disclaimer():
-    st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
     st.header("Disclaimer")
     st.warning(
-        "This application shows predicted contamination risk from a research model. "
-        "It is not a substitute for laboratory analysis, site inspection, or official environmental assessment."
+        """
+        Predictions are screening-level estimates from a machine learning model. They are not
+        laboratory results and do not replace soil or water testing.
+
+        The soil model is based on 122 published soil samples and the water model on 89 published
+        water samples.
+
+        Heavy contamination is predicted most reliably; Moderate, Slight and Clean soil predictions
+        are less reliable.
+
+        In water, "Safe" means no tested metal is predicted to exceed WHO drinking-water guidelines.
+        Some metals, including mercury, were not measured at some sites and some sampled waters are
+        not drinking sources.
+
+        Predictions far from sampled areas are extrapolations and carry more uncertainty.
+
+        The data come from published studies and may not reflect current conditions.
+        """
     )
-    st.markdown("</div>", unsafe_allow_html=True)
+
+def render_project_header() -> None:
+    st.markdown(
+        """
+        <div class="hero">
+            <h1>PREDICTING HEAVY METALS CONTAMINATION AROUND ARTISANAL GOLD MINES IN KAKAMEGA COUNTY</h1>
+            <p>An interactive machine learning map showing predicted soil and water contamination risk across Kakamega County, Kenya.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def main():
@@ -2021,16 +2104,22 @@ def main():
             left, mid, right = st.columns([0.05, 0.9, 0.05])
             with mid:
                 st.image(str(LOGO_PATH), width=260)
+
         st.markdown(
             """
             <div class="brand-block">
                 <p class="uni">Dedan Kimathi University of Technology</p>
-                <p class="dept">Department of Geosciences</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.markdown('<p class="nav-label">Navigation Menu</p><p style="font-size:0.82rem;color:#b8bbc4;margin:-0.15rem 0 0.35rem 0;">Go to:</p>', unsafe_allow_html=True)
+
+        st.markdown(
+            '<p class="nav-label">Navigation Menu</p>'
+            '<p style="font-size:0.82rem;color:#b8bbc4;margin:-0.15rem 0 0.35rem 0;">Go to:</p>',
+            unsafe_allow_html=True,
+        )
+
         page = st.radio(
             "Navigation",
             [
@@ -2046,29 +2135,47 @@ def main():
             label_visibility="collapsed",
             index=0,
         )
+
+        st.markdown("#### Soil / Water")
+        medium = st.radio(
+            "Medium",
+            ["Soil", "Water"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="active_medium",
+        )
+
+        if medium == "Soil":
+            st.caption("XGBoost · CCME agriculture soil quality guidelines")
+        else:
+            st.caption("Random Forest · WHO drinking-water guidelines + NEMA zinc guideline")
+
         with st.expander("Raster file"):
             uploaded = st.file_uploader(
                 "Upload GeoTIFF override",
                 type=["tif", "tiff"],
                 help="Optional GeoTIFF override for the selected map medium.",
             )
+
         st.markdown("---")
         st.markdown(get_sidebar_footer_html(), unsafe_allow_html=True)
 
+    render_project_header()
+
     if page == "Interactive Map":
-        page_interactive_map(uploaded)
+        page_interactive_map(uploaded, medium)
     elif page == "Check My Location":
-        page_check_location(uploaded)
+        page_check_location(uploaded, medium)
     elif page == "Data Explorer":
-        page_data_explorer(uploaded)
+        page_data_explorer(uploaded, medium)
     elif page == "Model Results":
-        page_model_results()
+        page_model_results(medium)
     elif page == "Methodology":
-        page_methodology()
+        page_methodology(medium)
     elif page == "About the Project":
         page_about()
     elif page == "Key Statistics":
-        page_statistics()
+        page_statistics(medium)
     else:
         page_disclaimer()
 
