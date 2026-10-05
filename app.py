@@ -1796,12 +1796,11 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
 
 
 def page_interactive_map(uploaded_file, medium: str):
-    loading_placeholder = None
-    if st.session_state.pop("medium_switch_loading", False):
-        loading_placeholder = map_loading_placeholder(
-            600,
-            f"Loading {medium.lower()} map",
-        )
+    st.session_state.pop("medium_switch_loading", None)
+    loading_placeholder = map_loading_placeholder(
+        600,
+        f"Loading {medium.lower()} map",
+    )
 
     raster_path = resolve_raster_path(
         medium,
@@ -2188,12 +2187,11 @@ def page_check_location(uploaded_file, medium: str):
         "before farming, drawing water or managing mine waste."
     )
 
-    loading_placeholder = None
-    if st.session_state.pop("medium_switch_loading", False):
-        loading_placeholder = map_loading_placeholder(
-            470,
-            f"Loading {medium.lower()} location map",
-        )
+    st.session_state.pop("medium_switch_loading", None)
+    loading_placeholder = map_loading_placeholder(
+        470,
+        f"Loading {medium.lower()} location map",
+    )
 
     raster_path = resolve_raster_path(
         medium,
@@ -2695,6 +2693,10 @@ def page_about():
     )
 
     st.subheader("Study area map")
+    loading_placeholder = map_loading_placeholder(
+        360,
+        "Loading study area map",
+    )
     county_bounds = get_county_wgs84_bounds()
     center_lat = (county_bounds[0][0] + county_bounds[1][0]) / 2
     center_lon = (county_bounds[0][1] + county_bounds[1][1]) / 2
@@ -2705,6 +2707,7 @@ def page_about():
         None,
         "Loading study area map",
     )
+    loading_placeholder.empty()
     st_folium(m, width="stretch", height=360, returned_objects=[], key="about-study-area")
 
 def page_statistics(medium: str):
