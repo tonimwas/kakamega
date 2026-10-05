@@ -98,9 +98,6 @@ st.markdown("""
         margin-top: 0.1rem !important;
         margin-bottom: 0.1rem !important;
     }
-    .leaflet-top.leaflet-right .leaflet-control-layers {
-        margin-top: 52px !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -472,10 +469,7 @@ def add_raster_overlay(
     layer_name: str,
     medium: str = "Soil",
 ):
-    rgba_image, bounds, metadata = prepare_raster_overlay(
-        raster_path,
-        medium=medium,
-    )
+    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
     if rgba_image is None or bounds is None:
         return None, metadata, None
 
@@ -617,6 +611,357 @@ def add_map_controls(
 
     controls = MacroElement()
     controls._name = "RasterMapControls"
+    controls._template = Template(template)
+    m.add_child(controls)
+
+
+def add_interactive_medium_controls(
+    m: folium.Map,
+    soil_overlay: ImageOverlay,
+    soil_rgba,
+    soil_bounds,
+    water_overlay: ImageOverlay,
+    water_rgba,
+    water_bounds,
+) -> None:
+    """Switch Soil/Water, identify pixels, center, and change opacity fully in Leaflet."""
+    county_data = _admin_lookup_geojson(
+        str(COUNTY_GEOJSON),
+        ("ADM1_EN", "COUNTY", "County", "county", "NAME_1"),
+    )
+    constituency_data = _admin_lookup_geojson(
+        str(CONSTITUENCIES_GEOJSON),
+        ("ADM2_EN", "CONSTITUEN", "Constituency", "constituency", "NAME_2"),
+    )
+    ward_data = _admin_lookup_geojson(
+        str(WARDS_GEOJSON),
+        ("ward", "WARD", "Ward", "NAME", "name"),
+    )
+
+    soil_url = _encode_png(soil_rgba)
+    water_url = _encode_png(water_rgba)
+
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const soilOverlay = __SOIL_OVERLAY__;
+        const waterOverlay = __WATER_OVERLAY__;
+
+        const soilBounds = L.latLngBounds(
+            [__SOIL_SOUTH__, __SOIL_WEST__],
+            [__SOIL_NORTH__, __SOIL_EAST__]
+        );
+        const waterBounds = L.latLngBounds(
+            [__WATER_SOUTH__, __WATER_WEST__],
+            [__WATER_NORTH__, __WATER_EAST__]
+        );
+
+        const countyData = __COUNTY_DATA__;
+        const constituencyData = __CONSTITUENCY_DATA__;
+        const wardData = __WARD_DATA__;
+
+        const soilClasses = [
+            {rgb: [76, 175, 80], label: "Clean"},
+            {rgb: [255, 235, 59], label: "Slightly contaminated"},
+            {rgb: [255, 152, 0], label: "Moderate"},
+            {rgb: [244, 67, 54], label: "Heavy contamination"}
+        ];
+        const waterClasses = [
+            {rgb: [33, 150, 243], label: "Safe"},
+            {rgb: [255, 235, 59], label: "Unsafe"}
+        ];
+
+        let activeMedium = "Soil";
+        let currentOpacity = 0.7;
+
+        function makeCanvas(url) {
+            const image = new Image();
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d", {willReadFrequently: true});
+            const state = {image, canvas, ctx, ready: false};
+            image.onload = function() {
+                canvas.width = image.naturalWidth;
+                canvas.height = image.naturalHeight;
+                ctx.drawImage(image, 0, 0);
+                state.ready = true;
+            };
+            image.src = url;
+            return state;
+        }
+
+        const soilRaster = makeCanvas(__SOIL_URL__);
+        const waterRaster = makeCanvas(__WATER_URL__);
+
+        function pointInRing(lng, lat, ring) {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const xi = ring[i][0], yi = ring[i][1];
+                const xj = ring[j][0], yj = ring[j][1];
+                const intersects =
+                    ((yi > lat) !== (yj > lat)) &&
+                    (lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+                if (intersects) inside = !inside;
+            }
+            return inside;
+        }
+
+        function pointInPolygon(lng, lat, rings) {
+            if (!rings || !rings.length || !pointInRing(lng, lat, rings[0])) return false;
+            for (let i = 1; i < rings.length; i++) {
+                if (pointInRing(lng, lat, rings[i])) return false;
+            }
+            return true;
+        }
+
+        function geometryContains(geometry, lng, lat) {
+            if (!geometry) return false;
+            if (geometry.type === "Polygon") return pointInPolygon(lng, lat, geometry.coordinates);
+            if (geometry.type === "MultiPolygon") {
+                return geometry.coordinates.some(p => pointInPolygon(lng, lat, p));
+            }
+            return false;
+        }
+
+        function findAdminName(collection, lng, lat) {
+            if (!collection || !collection.features) return null;
+            for (const feature of collection.features) {
+                if (geometryContains(feature.geometry, lng, lat)) {
+                    return feature.properties && feature.properties.lookup_name
+                        ? String(feature.properties.lookup_name)
+                        : null;
+                }
+            }
+            return null;
+        }
+
+        function classifyPixel(r, g, b, a, classes) {
+            if (a === 0) return null;
+            let best = null;
+            let bestDistance = Infinity;
+            for (const item of classes) {
+                const dr = r - item.rgb[0];
+                const dg = g - item.rgb[1];
+                const db = b - item.rgb[2];
+                const distance = dr * dr + dg * dg + db * db;
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = item;
+                }
+            }
+            return best;
+        }
+
+        const legend = L.control({position: "bottomright"});
+        legend.onAdd = function() {
+            const div = L.DomUtil.create("div", "kakamega-dynamic-legend");
+            div.style.background = "rgba(255,255,255,0.94)";
+            div.style.padding = "9px 11px";
+            div.style.border = "1px solid #c4a35a";
+            div.style.fontFamily = "Georgia,serif";
+            div.style.fontSize = "12px";
+            div.style.color = "#152238";
+            div.style.minWidth = "155px";
+            div.style.marginBottom = "38px";
+            div.style.boxShadow = "0 2px 8px rgba(21,34,56,0.18)";
+            L.DomEvent.disableClickPropagation(div);
+            return div;
+        };
+        legend.addTo(map);
+
+        function updateLegend() {
+            const div = document.querySelector(".kakamega-dynamic-legend");
+            if (!div) return;
+            if (activeMedium === "Water") {
+                div.innerHTML =
+                    '<div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">Water safety</div>' +
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#2196F3;border:1px solid #333;margin-right:6px;"></span>Safe</div>' +
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Unsafe</div>';
+            } else {
+                div.innerHTML =
+                    '<div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">Contamination risk</div>' +
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Clean</div>' +
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Slightly contaminated</div>' +
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FF9800;border:1px solid #333;margin-right:6px;"></span>Moderate</div>' +
+                    '<div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#F44336;border:1px solid #333;margin-right:6px;"></span>Heavy contamination</div>';
+            }
+        }
+
+        function setMedium(medium) {
+            activeMedium = medium;
+            if (medium === "Water") {
+                if (map.hasLayer(soilOverlay)) map.removeLayer(soilOverlay);
+                if (!map.hasLayer(waterOverlay)) waterOverlay.addTo(map);
+                waterOverlay.setOpacity(currentOpacity);
+            } else {
+                if (map.hasLayer(waterOverlay)) map.removeLayer(waterOverlay);
+                if (!map.hasLayer(soilOverlay)) soilOverlay.addTo(map);
+                soilOverlay.setOpacity(currentOpacity);
+            }
+            updateLegend();
+            document.querySelectorAll(".kakamega-medium-btn").forEach(btn => {
+                const active = btn.dataset.medium === activeMedium;
+                btn.style.background = active ? "#ff4b4b" : "rgba(255,255,255,0.92)";
+                btn.style.color = active ? "#fff" : "#222";
+            });
+            map.closePopup();
+        }
+
+        const MediumControl = L.Control.extend({
+            options: {position: "topleft"},
+            onAdd: function() {
+                const container = L.DomUtil.create("div", "leaflet-bar");
+                container.style.display = "flex";
+                container.style.marginTop = "8px";
+                ["Soil", "Water"].forEach(name => {
+                    const btn = L.DomUtil.create("a", "kakamega-medium-btn", container);
+                    btn.href = "#";
+                    btn.dataset.medium = name;
+                    btn.innerHTML = name;
+                    btn.style.width = "54px";
+                    btn.style.height = "30px";
+                    btn.style.lineHeight = "30px";
+                    btn.style.textAlign = "center";
+                    btn.style.fontSize = "12px";
+                    btn.style.fontWeight = "600";
+                    L.DomEvent.on(btn, "click", function(e) {
+                        L.DomEvent.preventDefault(e);
+                        setMedium(name);
+                    });
+                });
+                L.DomEvent.disableClickPropagation(container);
+                return container;
+            }
+        });
+        map.addControl(new MediumControl());
+
+        const CenterControl = L.Control.extend({
+            options: {position: "topleft"},
+            onAdd: function() {
+                const container = L.DomUtil.create("div", "leaflet-bar");
+                const btn = L.DomUtil.create("a", "", container);
+                btn.href = "#";
+                btn.title = "Center active raster";
+                btn.innerHTML = "⌖";
+                btn.style.fontSize = "22px";
+                btn.style.width = "30px";
+                btn.style.height = "30px";
+                btn.style.lineHeight = "30px";
+                btn.style.textAlign = "center";
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.on(btn, "click", function(e) {
+                    L.DomEvent.preventDefault(e);
+                    map.fitBounds(activeMedium === "Water" ? waterBounds : soilBounds, {
+                        animate: true,
+                        duration: 0.2,
+                        padding: [8, 8]
+                    });
+                });
+                return container;
+            }
+        });
+        map.addControl(new CenterControl());
+
+        const OpacityControl = L.Control.extend({
+            options: {position: "topright"},
+            onAdd: function() {
+                const container = L.DomUtil.create("div", "");
+                container.style.background = "transparent";
+                container.style.display = "flex";
+                container.style.alignItems = "center";
+                container.style.gap = "6px";
+
+                const icon = L.DomUtil.create("span", "", container);
+                icon.innerHTML = "◐";
+                icon.style.color = "#fff";
+                icon.style.fontSize = "17px";
+                icon.style.textShadow = "0 1px 2px rgba(0,0,0,0.65)";
+
+                const slider = L.DomUtil.create("input", "", container);
+                slider.type = "range";
+                slider.min = "0.10";
+                slider.max = "1.00";
+                slider.step = "0.05";
+                slider.value = "0.70";
+                slider.style.width = "105px";
+                slider.style.cursor = "pointer";
+                slider.style.accentColor = "#fff";
+                slider.addEventListener("input", function() {
+                    currentOpacity = parseFloat(slider.value);
+                    if (activeMedium === "Water") waterOverlay.setOpacity(currentOpacity);
+                    else soilOverlay.setOpacity(currentOpacity);
+                });
+
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+        map.addControl(new OpacityControl());
+
+        map.on("click", function(e) {
+            const raster = activeMedium === "Water" ? waterRaster : soilRaster;
+            const bounds = activeMedium === "Water" ? waterBounds : soilBounds;
+            const classes = activeMedium === "Water" ? waterClasses : soilClasses;
+            if (!raster.ready || !bounds.contains(e.latlng)) return;
+
+            const sw = bounds.getSouthWest();
+            const ne = bounds.getNorthEast();
+            const xRatio = (e.latlng.lng - sw.lng) / (ne.lng - sw.lng);
+            const yRatio = (ne.lat - e.latlng.lat) / (ne.lat - sw.lat);
+            const x = Math.max(0, Math.min(raster.canvas.width - 1, Math.floor(xRatio * raster.canvas.width)));
+            const y = Math.max(0, Math.min(raster.canvas.height - 1, Math.floor(yRatio * raster.canvas.height)));
+
+            const pixel = raster.ctx.getImageData(x, y, 1, 1).data;
+            const status = classifyPixel(pixel[0], pixel[1], pixel[2], pixel[3], classes);
+            if (!status) return;
+
+            const county = findAdminName(countyData, e.latlng.lng, e.latlng.lat) || "Unknown";
+            const constituency = findAdminName(constituencyData, e.latlng.lng, e.latlng.lat) || "Unknown";
+            const ward = findAdminName(wardData, e.latlng.lng, e.latlng.lat) || "Unknown";
+            const label = activeMedium === "Water" ? "Water safety" : "Contamination";
+
+            const popupHtml =
+                '<div style="color:black;padding:5px;margin:0;font-size:12px;">' +
+                '<strong style="font-size:12px;color:black;">' + label + ': ' + status.label + '</strong><br>' +
+                '<div style="font-size:12px;"><strong>County:</strong> ' + county + '</div>' +
+                '<div style="font-size:12px;"><strong>Constituency:</strong> ' + constituency + '</div>' +
+                '<div style="font-size:12px;"><strong>Ward:</strong> ' + ward + '</div>' +
+                '</div>';
+
+            L.popup({maxWidth: 300, closeButton: true})
+                .setLatLng(e.latlng)
+                .setContent(popupHtml)
+                .openOn(map);
+        });
+
+        setMedium("Soil");
+    })();
+    {% endmacro %}
+    """
+
+    replacements = {
+        "__SOIL_OVERLAY__": soil_overlay.get_name(),
+        "__WATER_OVERLAY__": water_overlay.get_name(),
+        "__SOIL_SOUTH__": repr(float(soil_bounds[0][0])),
+        "__SOIL_WEST__": repr(float(soil_bounds[0][1])),
+        "__SOIL_NORTH__": repr(float(soil_bounds[1][0])),
+        "__SOIL_EAST__": repr(float(soil_bounds[1][1])),
+        "__WATER_SOUTH__": repr(float(water_bounds[0][0])),
+        "__WATER_WEST__": repr(float(water_bounds[0][1])),
+        "__WATER_NORTH__": repr(float(water_bounds[1][0])),
+        "__WATER_EAST__": repr(float(water_bounds[1][1])),
+        "__SOIL_URL__": json.dumps(soil_url),
+        "__WATER_URL__": json.dumps(water_url),
+        "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
+        "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
+        "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
+    }
+    for token, value in replacements.items():
+        template = template.replace(token, value)
+
+    controls = MacroElement()
+    controls._name = "InteractiveMediumControls"
     controls._template = Template(template)
     m.add_child(controls)
 
@@ -770,48 +1115,67 @@ def page_interactive_map(uploaded_file):
         unsafe_allow_html=True,
     )
 
-    medium = st.radio(
-        "Medium",
-        ["Soil", "Water"],
-        horizontal=True,
-        help="Switch between the soil contamination raster and the water safety raster.",
-    )
+    soil_path = str(SOIL_RASTER) if SOIL_RASTER.exists() else None
+    water_path = str(WATER_RASTER) if WATER_RASTER.exists() else None
 
-    raster_path = resolve_raster_path(medium, uploaded_file)
-    if raster_path is None:
-        st.error("No soil raster found at `data/Raster/Training_raster.tif`. Upload a GeoTIFF in the sidebar to continue.")
+    if soil_path is None or water_path is None:
+        st.error("Both soil and water raster files are required in data/Raster.")
         return
 
     try:
-        center_lat, center_lon = raster_map_center(raster_path)
+        center_lat, center_lon = raster_map_center(soil_path)
     except Exception:
         center_lat, center_lon = 0.28, 34.75
 
-    m = create_base_map(center_lat, center_lon, zoom=10)
-    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path, medium=medium)
-    if rgba_image is None or bounds is None:
-        st.error(f"Failed to load raster overlay: {metadata.get('error', 'Unknown error')}")
+    soil_rgba, soil_bounds, soil_meta = prepare_raster_overlay(soil_path)
+    water_rgba, water_bounds, water_meta = prepare_raster_overlay(water_path)
+
+    if soil_rgba is None or soil_bounds is None:
+        st.error(f"Failed to load soil raster: {soil_meta.get('error', 'Unknown error')}")
+        return
+    if water_rgba is None or water_bounds is None:
+        st.error(f"Failed to load water raster: {water_meta.get('error', 'Unknown error')}")
         return
 
-    overlay = ImageOverlay(
-        image=_encode_png(rgba_image),
-        bounds=bounds,
+    m = create_base_map(center_lat, center_lon, zoom=10)
+
+    soil_overlay = ImageOverlay(
+        image=_encode_png(soil_rgba),
+        bounds=soil_bounds,
         opacity=0.7,
-        name=("Water safety" if medium == "Water" else "Soil contamination risk"),
+        name="Soil contamination risk",
         interactive=False,
         cross_origin=False,
         zindex=1,
+        show=True,
     )
-    overlay.add_to(m)
-    # Initial map extent. Later centering is handled instantly in Leaflet.
-    m.fit_bounds(bounds)
+    soil_overlay.add_to(m)
 
-    add_map_controls(m, overlay, bounds, initial_opacity=0.7)
-    add_map_legend(m, medium)
+    water_overlay = ImageOverlay(
+        image=_encode_png(water_rgba),
+        bounds=water_bounds,
+        opacity=0.7,
+        name="Water safety",
+        interactive=False,
+        cross_origin=False,
+        zindex=1,
+        show=False,
+    )
+    water_overlay.add_to(m)
+
+    m.fit_bounds(soil_bounds)
+
+    add_interactive_medium_controls(
+        m,
+        soil_overlay,
+        soil_rgba,
+        soil_bounds,
+        water_overlay,
+        water_rgba,
+        water_bounds,
+    )
+
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
-
-    # Handle raster identification entirely in the browser for instant popups.
-    add_instant_raster_click(m, rgba_image, bounds, medium)
 
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
@@ -819,7 +1183,7 @@ def page_interactive_map(uploaded_file):
         width="stretch",
         height=600,
         returned_objects=[],
-        key=f"kakamega-map-{medium}",
+        key="kakamega-map",
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -856,7 +1220,7 @@ def page_data_explorer(uploaded_file):
         st.warning("Raster data is not available.")
         return
 
-    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path, medium=medium)
+    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
     if metadata.get("error"):
         st.error(metadata["error"])
         return
