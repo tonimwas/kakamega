@@ -1796,6 +1796,12 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
 
 
 def page_interactive_map(uploaded_file, medium: str):
+    loader = st.empty()
+    loader.markdown(
+        wave_loader_html(f"Loading {medium.lower()} map"),
+        unsafe_allow_html=True,
+    )
+
     raster_path = resolve_raster_path(
         medium,
         uploaded_file if medium == "Soil" else None,
@@ -1845,6 +1851,7 @@ def page_interactive_map(uploaded_file, medium: str):
     folium.LayerControl(collapsed=False, position="topright").add_to(m)
     add_leaflet_internal_css(m)
 
+    loader.empty()
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
         m,
@@ -1938,18 +1945,40 @@ def add_fast_location_query(
         );
 
         const mapEl = map.getContainer();
-        const parent = mapEl.parentElement;
-        parent.style.position = "relative";
-        parent.style.height = "100%";
+        const root = document.documentElement;
+        const body = document.body;
+
+        root.style.width = "100%";
+        root.style.height = "100%";
+        root.style.margin = "0";
+        root.style.padding = "0";
+        root.style.overflow = "hidden";
+
+        body.style.width = "100%";
+        body.style.height = "100%";
+        body.style.margin = "0";
+        body.style.padding = "0";
+        body.style.overflow = "hidden";
+        body.style.position = "relative";
+        body.style.background = "#0e1117";
+
+        mapEl.style.position = "absolute";
+        mapEl.style.left = "0";
+        mapEl.style.top = "0";
+        mapEl.style.bottom = "0";
         mapEl.style.width = "calc(100% - 300px)";
         mapEl.style.height = "100%";
         mapEl.style.display = "block";
+
+        const previousPanel = body.querySelector(".kakamega-location-panel");
+        if (previousPanel) previousPanel.remove();
 
         const panel = document.createElement("div");
         panel.className = "kakamega-location-panel";
         panel.style.position = "absolute";
         panel.style.top = "0";
         panel.style.right = "0";
+        panel.style.bottom = "0";
         panel.style.width = "290px";
         panel.style.height = "100%";
         panel.style.boxSizing = "border-box";
@@ -1971,7 +2000,7 @@ def add_fast_location_query(
             '<div id="query-result" style="margin-top:12px;font-size:12px;line-height:1.35;">' +
             '<div style="color:#b8bbc4;">No location selected yet.</div></div>';
 
-        parent.appendChild(panel);
+        body.appendChild(panel);
 
         const image = new Image();
         const canvas = document.createElement("canvas");
@@ -2110,7 +2139,10 @@ def add_fast_location_query(
         });
 
         map.fitBounds(countyBounds);
-        setTimeout(function(){ map.invalidateSize(); }, 50);
+        requestAnimationFrame(function() {
+            map.invalidateSize(false);
+            setTimeout(function(){ map.invalidateSize(false); }, 120);
+        });
     })();
     {% endmacro %}
     """
@@ -2146,6 +2178,12 @@ def page_check_location(uploaded_file, medium: str):
     st.write(
         "Click the map or enter latitude and longitude in the panel to see the predicted contamination risk "
         "before farming, drawing water or managing mine waste."
+    )
+
+    loader = st.empty()
+    loader.markdown(
+        wave_loader_html(f"Loading {medium.lower()} location map"),
+        unsafe_allow_html=True,
     )
 
     raster_path = resolve_raster_path(
@@ -2188,6 +2226,7 @@ def page_check_location(uploaded_file, medium: str):
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
     add_leaflet_internal_css(m)
 
+    loader.empty()
     st_folium(
         m,
         width="stretch",
@@ -2701,6 +2740,46 @@ def page_disclaimer():
         The data come from published studies and may not reflect current conditions.
         """
     )
+
+def wave_loader_html(text: str = "Loading map") -> str:
+    return f"""
+    <div class="wave-loader-wrap">
+        <span class="wave-loader-text">{text}</span>
+        <span class="wave-dot wave-dot-1"></span>
+        <span class="wave-dot wave-dot-2"></span>
+        <span class="wave-dot wave-dot-3"></span>
+    </div>
+    <style>
+    .wave-loader-wrap {{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        gap:6px;
+        min-height:44px;
+        color:#d7d9df;
+        font-size:0.88rem;
+        font-weight:600;
+    }}
+    .wave-loader-text {{
+        margin-right:3px;
+    }}
+    .wave-dot {{
+        width:7px;
+        height:7px;
+        border-radius:50%;
+        background:#ff4b4b;
+        display:inline-block;
+        animation:kakamega-wave 0.9s infinite ease-in-out;
+    }}
+    .wave-dot-2 {{ animation-delay:0.14s; }}
+    .wave-dot-3 {{ animation-delay:0.28s; }}
+    @keyframes kakamega-wave {{
+        0%, 60%, 100% {{ transform:translateY(0); opacity:0.45; }}
+        30% {{ transform:translateY(-7px); opacity:1; }}
+    }}
+    </style>
+    """
+
 
 def render_project_header() -> None:
     st.markdown(
