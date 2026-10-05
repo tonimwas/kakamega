@@ -1856,9 +1856,6 @@ def page_interactive_map(uploaded_file, medium: str):
         f"Loading {medium.lower()} map",
     )
 
-    if loading_placeholder is not None:
-        loading_placeholder.empty()
-
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
         m,
@@ -1868,6 +1865,9 @@ def page_interactive_map(uploaded_file, medium: str):
         key="kakamega-map",
     )
     st.markdown("</div>", unsafe_allow_html=True)
+
+    if loading_placeholder is not None:
+        loading_placeholder.empty()
     st.caption(
         f"{medium} is selected. Use the sample-points eye control to view "
         f"{medium.lower()} sample points, then click a point to see its measured metals, class and advice."
@@ -2238,9 +2238,6 @@ def page_check_location(uploaded_file, medium: str):
         f"Loading {medium.lower()} location map",
     )
 
-    if loading_placeholder is not None:
-        loading_placeholder.empty()
-
     st_folium(
         m,
         width="stretch",
@@ -2248,6 +2245,9 @@ def page_check_location(uploaded_file, medium: str):
         returned_objects=[],
         key="check-location",
     )
+
+    if loading_placeholder is not None:
+        loading_placeholder.empty()
 
 
 @st.cache_data(show_spinner=False)
@@ -2723,7 +2723,7 @@ def page_statistics(medium: str):
         .stats-page-subtitle {
             font-size: 0.78rem;
             color: #aeb2ba;
-            margin: 0 0 0.45rem 0;
+            margin: 0 0 0.55rem 0;
         }
         .stats-card {
             background: #171a21;
@@ -2745,13 +2745,65 @@ def page_statistics(medium: str):
             font-weight: 700;
             line-height: 1.05;
         }
+        .stats-chart-wrap {
+            margin-top: 0.75rem;
+            padding: 0.75rem 0.9rem 0.55rem 0.9rem;
+            background: #171a21;
+            border: 1px solid #2d3039;
+            border-radius: 7px;
+        }
+        .stats-chart-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #d8dbe2;
+            margin-bottom: 0.6rem;
+        }
+        .stats-bars {
+            height: 270px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-around;
+            gap: 18px;
+            padding: 0 14px 8px 14px;
+            border-bottom: 1px solid #434750;
+        }
+        .stats-bar-group {
+            flex: 1;
+            max-width: 100px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            align-items: center;
+        }
+        .stats-bar-count {
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 4px;
+        }
+        .stats-bar {
+            width: 68%;
+            min-width: 34px;
+            border-radius: 4px 4px 0 0;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+        }
+        .stats-bar-label {
+            font-size: 0.66rem;
+            font-weight: 700;
+            color: #d4d7de;
+            margin-top: 6px;
+            text-align: center;
+            line-height: 1.05;
+        }
         .balance-box {
+            margin-top: 0.75rem;
             background: #171a21;
             border: 1px solid #2d3039;
             border-radius: 6px;
-            padding: 0.55rem 0.65rem;
+            padding: 0.7rem 0.75rem;
             font-size: 0.76rem;
-            line-height: 1.32;
+            line-height: 1.38;
             color: #d8dbe2;
         }
         .balance-box strong {
@@ -2775,12 +2827,12 @@ def page_statistics(medium: str):
             ("Accuracy", "76.2%"),
             ("Macro F1", "0.57"),
         ]
-        class_counts = pd.DataFrame(
-            {
-                "Class": ["Clean", "Slight", "Moderate", "Heavy"],
-                "Samples": [5, 10, 15, 92],
-            }
-        )
+        classes = [
+            ("Clean", 5, "#4CAF50"),
+            ("Slight", 10, "#FFEB3B"),
+            ("Moderate", 15, "#FF9800"),
+            ("Heavy", 92, "#F44336"),
+        ]
         dominant_share = 92 / 122 * 100
         minority_share = 30 / 122 * 100
         imbalance_text = (
@@ -2798,12 +2850,10 @@ def page_statistics(medium: str):
             ("Accuracy", "79.8%"),
             ("Macro F1", "0.77"),
         ]
-        class_counts = pd.DataFrame(
-            {
-                "Class": ["Safe", "Unsafe"],
-                "Samples": [62, 27],
-            }
-        )
+        classes = [
+            ("Safe", 62, "#4CAF50"),
+            ("Unsafe", 27, "#F44336"),
+        ]
         safe_share = 62 / 89 * 100
         unsafe_share = 27 / 89 * 100
         imbalance_text = (
@@ -2825,18 +2875,32 @@ def page_statistics(medium: str):
                 unsafe_allow_html=True,
             )
 
-    chart_col, insight_col = st.columns([1.55, 1], gap="small")
+    max_count = max(count for _, count, _ in classes)
+    bars_html = ""
+    for label, count, color in classes:
+        height_pct = max(10, (count / max_count) * 88)
+        bars_html += f"""
+        <div class="stats-bar-group">
+            <div class="stats-bar-count">{count}</div>
+            <div class="stats-bar" style="height:{height_pct:.1f}%;background:{color};"></div>
+            <div class="stats-bar-label">{label}</div>
+        </div>
+        """
+
+    chart_col, insight_col = st.columns([1.7, 1], gap="medium")
 
     with chart_col:
-        st.caption("Samples per class")
-        st.bar_chart(
-            class_counts.set_index("Class"),
-            height=235,
-            use_container_width=True,
+        st.markdown(
+            f"""
+            <div class="stats-chart-wrap">
+                <div class="stats-chart-title">Samples per class</div>
+                <div class="stats-bars">{bars_html}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
     with insight_col:
-        st.caption("Distribution insight")
         st.markdown(
             f'<div class="balance-box">{imbalance_text}</div>',
             unsafe_allow_html=True,
@@ -2994,16 +3058,51 @@ def map_loading_placeholder(height: int, text: str):
     placeholder = st.empty()
     placeholder.markdown(
         f"""
-        <div style="
-            height:{height}px;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            border-radius:8px;
-            background:#11151b;
-            border:1px solid #2d3039;
-        ">
-            {wave_loader_html(text)}
+        <style>
+        @keyframes kakamega-preload-wave {{
+            0%, 60%, 100% {{ transform: translateY(0); opacity: 0.45; }}
+            30% {{ transform: translateY(-7px); opacity: 1; }}
+        }}
+        .kakamega-preload {{
+            height: {height}px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            background: #11151b;
+            border: 1px solid #2d3039;
+        }}
+        .kakamega-preload-inner {{
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            background: rgba(14,17,23,0.78);
+            color: #f4f4f5;
+            font-family: "Source Sans 3", "Segoe UI", sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.28);
+        }}
+        .kakamega-preload-dot {{
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #ff4b4b;
+            display: inline-block;
+            animation: kakamega-preload-wave 0.9s infinite ease-in-out;
+        }}
+        .kakamega-preload-dot:nth-of-type(2) {{ animation-delay: 0.14s; }}
+        .kakamega-preload-dot:nth-of-type(3) {{ animation-delay: 0.28s; }}
+        </style>
+        <div class="kakamega-preload">
+            <div class="kakamega-preload-inner">
+                <span>{text}</span>
+                <span class="kakamega-preload-dot"></span>
+                <span class="kakamega-preload-dot"></span>
+                <span class="kakamega-preload-dot"></span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
