@@ -1985,6 +1985,8 @@ def page_interactive_map(uploaded_file, medium: str):
     if focused_sample is not None:
         add_focused_sample_marker(m, focused_sample, medium)
 
+    add_hash_focused_sample(m, medium)
+
     add_map_legend(m, medium)
     folium.LayerControl(collapsed=False, position="topright").add_to(m)
     add_leaflet_internal_css(m)
@@ -2140,6 +2142,138 @@ def add_focused_sample_marker(m: folium.Map, sample: dict, medium: str) -> None:
     )
     marker._template = Template(template)
     m.add_child(marker)
+
+def add_hash_focused_sample(m: folium.Map, medium: str) -> None:
+    """Read a Data Explorer sample target from the browser hash and highlight it instantly."""
+    records = sample_query_records(medium)
+    if not records:
+        return
+
+    marker = MacroElement()
+    marker._name = "HashFocusedSample"
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const samples = __SAMPLES__;
+        const medium = __MEDIUM__;
+
+        function parseFocusHash() {
+            try {
+                const raw = (window.parent.location.hash || "").replace(/^#/, "");
+                if (!raw) return null;
+                const params = new URLSearchParams(raw);
+                return {
+                    id: params.get("focus_sample"),
+                    medium: params.get("focus_medium")
+                };
+            } catch (e) {
+                return null;
+            }
+        }
+
+        const target = parseFocusHash();
+        if (!target || !target.id || target.medium !== medium) return;
+
+        const sample = samples.find(function(item) {
+            return String(item.id).toLowerCase() === String(target.id).toLowerCase();
+        });
+        if (!sample) return;
+
+        const style = document.createElement("style");
+        style.textContent =
+            '@keyframes kakamegaHashSamplePulse{' +
+            '0%,100%{transform:scale(.82);opacity:.72;box-shadow:0 0 0 2px rgba(255,255,255,.75)}' +
+            '50%{transform:scale(1.28);opacity:1;box-shadow:0 0 0 5px rgba(255,255,255,.24)}' +
+            '}' +
+            '.kakamega-hash-sample{' +
+            'width:12px;height:12px;border-radius:50%;background:#ff4b4b;' +
+            'border:2px solid #fff;animation:kakamegaHashSamplePulse 1s infinite ease-in-out;' +
+            'transform-origin:center;' +
+            '}';
+        document.head.appendChild(style);
+
+        const icon = L.divIcon({
+            className: '',
+            html: '<div class="kakamega-hash-sample"></div>',
+            iconSize: [16,16],
+            iconAnchor: [8,8]
+        });
+
+        const focusedMarker = L.marker(
+            [sample.lat, sample.lng],
+            {
+                icon: icon,
+                interactive: true,
+                keyboard: false,
+                zIndexOffset: 1800
+            }
+        )
+        .bindTooltip(
+            sample.id + ' · ' + (sample.risk_class || ''),
+            {direction:'top', opacity:.95}
+        )
+        .addTo(map);
+
+        const ClearHashControl = L.Control.extend({
+            options: {position:'topleft'},
+            onAdd: function() {
+                const wrap = L.DomUtil.create('div','leaflet-bar');
+                const btn = L.DomUtil.create('a','',wrap);
+                btn.href = '#';
+                btn.innerHTML = 'Clear view';
+                btn.title = 'Clear highlighted sample';
+                btn.style.width = 'auto';
+                btn.style.minWidth = '72px';
+                btn.style.padding = '0 8px';
+                btn.style.fontSize = '11px';
+                btn.style.fontWeight = '700';
+                btn.style.lineHeight = '28px';
+                btn.style.height = '28px';
+                btn.style.background = 'rgba(255,255,255,.94)';
+                btn.style.color = '#222';
+
+                L.DomEvent.disableClickPropagation(wrap);
+                L.DomEvent.on(btn,'click',function(e) {
+                    L.DomEvent.preventDefault(e);
+                    if (map.hasLayer(focusedMarker)) map.removeLayer(focusedMarker);
+                    map.removeControl(clearControl);
+                });
+                return wrap;
+            }
+        });
+
+        const clearControl = new ClearHashControl();
+        map.addControl(clearControl);
+
+        map.setView(
+            [sample.lat, sample.lng],
+            Math.max(map.getZoom(), 15),
+            {animate:false}
+        );
+
+        // Remove only the hash after the destination map has consumed it.
+        try {
+            const url = window.parent.location.pathname +
+                window.parent.location.search;
+            window.parent.history.replaceState(
+                null,
+                '',
+                url
+            );
+        } catch (e) {}
+    })();
+    {% endmacro %}
+    """
+
+    template = template.replace(
+        "__SAMPLES__",
+        json.dumps(records, separators=(",", ":")),
+    )
+    template = template.replace("__MEDIUM__", json.dumps(medium))
+    marker._template = Template(template)
+    m.add_child(marker)
+
 
 
 def add_fast_location_query(
@@ -2887,13 +3021,13 @@ def page_data_explorer(uploaded_file, medium: str):
         if id_column is not None:
             linked_table[id_column] = linked_table[id_column].astype(str).map(
                 lambda sid: (
-                    f"?focus_sample={sid}&focus_medium={medium}"
+                    f"#focus_sample={sid}&focus_medium={medium}"
                 )
             )
             column_config = {
                 id_column: st.column_config.LinkColumn(
                     id_column,
-                    help="Click a sample ID to locate it on the Interactive Map.",
+                    help="Click a sample ID to locate it on the Interactive Map without reloading the browser.",
                     display_text=r"focus_sample=([^&]+)",
                 )
             }
@@ -3855,6 +3989,84 @@ def install_mobile_sidebar_toggle() -> None:
 
 
 
+def install_hash_navigation_controller() -> None:
+    """Handle internal sample links without a full browser reload."""
+    html = """
+    <script>
+    (function() {
+        const doc = window.parent.document;
+        const win = window.parent;
+
+        function parseFocusHash() {
+            const raw = (win.location.hash || "").replace(/^#/, "");
+            if (!raw) return null;
+            const params = new URLSearchParams(raw);
+            const sample = params.get("focus_sample");
+            const medium = params.get("focus_medium");
+            if (!sample || !medium) return null;
+            return {sample: sample, medium: medium};
+        }
+
+        function findSidebarRadio(labelText) {
+            const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sidebar) return null;
+
+            const wanted = String(labelText).trim().toLowerCase();
+            const labels = Array.from(sidebar.querySelectorAll("label"));
+
+            for (const label of labels) {
+                const text = (label.innerText || "")
+                    .replace(/\s+/g, " ")
+                    .trim()
+                    .toLowerCase();
+                const input = label.querySelector('input[type="radio"]');
+                if (!input) continue;
+                if (text === wanted || text.startsWith(wanted + " ")) {
+                    return {label: label, input: input};
+                }
+            }
+            return null;
+        }
+
+        function activateInteractiveMap() {
+            const target = findSidebarRadio("Interactive Map");
+            if (!target) return false;
+            if (target.input.checked) return true;
+
+            // Reuse the app's existing immediate black transition.
+            try {
+                target.label.dispatchEvent(new PointerEvent("pointerdown", {
+                    bubbles: true,
+                    cancelable: true,
+                    pointerType: "mouse"
+                }));
+            } catch (e) {}
+
+            try {
+                target.input.click();
+            } catch (e) {
+                try { target.label.click(); } catch (_) { return false; }
+            }
+            return true;
+        }
+
+        function handleHash() {
+            const focus = parseFocusHash();
+            if (!focus) return;
+            activateInteractiveMap();
+        }
+
+        if (win.__kakamegaFocusHashHandler) {
+            win.removeEventListener("hashchange", win.__kakamegaFocusHashHandler);
+        }
+        win.__kakamegaFocusHashHandler = handleHash;
+        win.addEventListener("hashchange", handleHash);
+    })();
+    </script>
+    """
+    components.html(html, height=0, width=0)
+
+
 def install_browser_transition_controller(current_page: str, render_id: int) -> None:
     """Show a black transition immediately on sidebar radio clicks."""
     page_json = json.dumps(current_page)
@@ -4170,16 +4382,7 @@ def render_project_header() -> None:
 def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
     install_mobile_sidebar_toggle()
-
-    focus_sample = st.query_params.get("focus_sample")
-    focus_medium = st.query_params.get("focus_medium")
-    if focus_sample and focus_medium in {"Soil", "Water"}:
-        st.session_state["active_page"] = "Interactive Map"
-        st.session_state["active_medium"] = focus_medium
-        st.session_state["_focus_sample_id"] = str(focus_sample)
-        st.session_state["_focus_sample_medium"] = focus_medium
-        st.query_params.clear()
-        st.rerun()
+    install_hash_navigation_controller()
 
     with st.sidebar:
         if LOGO_PATH.exists():
