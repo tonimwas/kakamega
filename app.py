@@ -1608,31 +1608,68 @@ def add_interactive_medium_controls(
 
 
 def add_map_legend(m: folium.Map, medium: str = "Soil") -> None:
+    """Add a compact legend as a real Leaflet control inside the map."""
     if medium == "Water":
-        legend_items = """
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Safe</div>
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#F44336;border:1px solid #333;margin-right:6px;"></span>Unsafe</div>
-        """
-        legend_title = "Water safety"
+        title = "Water safety"
+        items = [
+            ("#4CAF50", "Safe"),
+            ("#F44336", "Unsafe"),
+        ]
     else:
-        legend_items = """
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Clean</div>
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Slightly contaminated</div>
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FF9800;border:1px solid #333;margin-right:6px;"></span>Moderate</div>
-          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#F44336;border:1px solid #333;margin-right:6px;"></span>Heavy contamination</div>
-        """
-        legend_title = "Contamination risk"
+        title = "Contamination risk"
+        items = [
+            ("#4CAF50", "Clean"),
+            ("#FFEB3B", "Slightly contaminated"),
+            ("#FF9800", "Moderate"),
+            ("#F44336", "Heavy contamination"),
+        ]
 
-    legend = f"""
-    <div style="position:fixed;bottom:58px;right:12px;z-index:999;
-                background:rgba(255,255,255,0.94);padding:10px 12px;
-                border:1px solid #c4a35a;font-family:Georgia,serif;font-size:12px;
-                color:#152238;min-width:168px;box-shadow:0 2px 8px rgba(21,34,56,0.18);">
-      <div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">{legend_title}</div>
-      {legend_items}
-    </div>
+    html_items = "".join(
+        f'<div style="margin:2px 0;white-space:nowrap;">'
+        f'<span style="display:inline-block;width:10px;height:10px;background:{color};'
+        f'border:1px solid #444;margin-right:5px;"></span>{label}</div>'
+        for color, label in items
+    )
+
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const LegendControl = L.Control.extend({
+            options: { position: "bottomright" },
+            onAdd: function() {
+                const div = L.DomUtil.create("div", "kakamega-map-legend");
+                div.innerHTML = __HTML__;
+                div.style.background = "rgba(255,255,255,0.90)";
+                div.style.padding = "6px 8px";
+                div.style.border = "1px solid rgba(0,0,0,0.35)";
+                div.style.borderRadius = "4px";
+                div.style.fontSize = "10px";
+                div.style.fontWeight = "700";
+                div.style.color = "#111";
+                div.style.lineHeight = "1.15";
+                div.style.marginBottom = "32px";
+                div.style.marginRight = "6px";
+                div.style.boxShadow = "0 1px 4px rgba(0,0,0,0.22)";
+                L.DomEvent.disableClickPropagation(div);
+                return div;
+            }
+        });
+        map.addControl(new LegendControl());
+    })();
+    {% endmacro %}
     """
-    m.get_root().html.add_child(folium.Element(legend))
+
+    legend_html = (
+        f'<div style="font-weight:700;border-bottom:1px solid #999;'
+        f'padding-bottom:3px;margin-bottom:3px;">{title}</div>{html_items}'
+    )
+    template = template.replace("__HTML__", json.dumps(legend_html))
+
+    control = MacroElement()
+    control._name = "KakamegaLegend"
+    control._template = Template(template)
+    m.add_child(control)
 
 
 def get_admin_info(lat: float, lon: float) -> dict:
@@ -1812,6 +1849,287 @@ def page_interactive_map(uploaded_file, medium: str):
         f"{medium} is selected. Use the sample-points eye control to view "
         f"{medium.lower()} sample points, then click a point to see its measured metals, class and advice."
     )
+
+
+@st.cache_data(show_spinner=False)
+def sample_query_records(medium: str) -> list[dict]:
+    """Compact sample data used by the browser-side location query."""
+    path = SOIL_SAMPLE_POINTS if medium == "Soil" else WATER_SAMPLE_POINTS
+    gdf = load_sample_points(str(path))
+    records = []
+    if gdf.empty:
+        return records
+
+    for _, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        sid = str(row.get("ID", ""))
+        records.append({
+            "id": sid,
+            "lat": float(geom.y),
+            "lng": float(geom.x),
+            "metals": sample_dominant_metals(sid, medium),
+        })
+    return records
+
+
+def add_fast_location_query(
+    m: folium.Map,
+    rgba_image,
+    bounds,
+    county_bounds,
+    medium: str,
+) -> None:
+    """Create an adjacent browser-side results panel with instant map queries."""
+    county_data = _admin_lookup_geojson(
+        str(COUNTY_GEOJSON),
+        ("ADM1_EN", "COUNTY", "County", "county", "NAME_1"),
+    )
+    constituency_data = _admin_lookup_geojson(
+        str(CONSTITUENCIES_GEOJSON),
+        ("ADM2_EN", "CONSTITUEN", "Constituency", "constituency", "NAME_2"),
+    )
+    ward_data = _admin_lookup_geojson(
+        str(WARDS_GEOJSON),
+        ("ward", "WARD", "Ward", "NAME", "name"),
+    )
+
+    classes = (
+        [
+            {"rgb": [76, 175, 80], "label": "Safe"},
+            {"rgb": [244, 67, 54], "label": "Unsafe"},
+        ]
+        if medium == "Water"
+        else [
+            {"rgb": [76, 175, 80], "label": "Clean"},
+            {"rgb": [255, 235, 59], "label": "Slightly contaminated"},
+            {"rgb": [255, 152, 0], "label": "Moderate"},
+            {"rgb": [244, 67, 54], "label": "Heavy contamination"},
+        ]
+    )
+
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const medium = __MEDIUM__;
+        const classes = __CLASSES__;
+        const samples = __SAMPLES__;
+        const countyData = __COUNTY_DATA__;
+        const constituencyData = __CONSTITUENCY_DATA__;
+        const wardData = __WARD_DATA__;
+        const rasterBounds = L.latLngBounds(
+            [__SOUTH__, __WEST__],
+            [__NORTH__, __EAST__]
+        );
+        const countyBounds = L.latLngBounds(
+            [__COUNTY_SOUTH__, __COUNTY_WEST__],
+            [__COUNTY_NORTH__, __COUNTY_EAST__]
+        );
+
+        const mapEl = map.getContainer();
+        const parent = mapEl.parentElement;
+        parent.style.position = "relative";
+        parent.style.height = "100%";
+        mapEl.style.width = "calc(100% - 300px)";
+        mapEl.style.height = "100%";
+        mapEl.style.display = "block";
+
+        const panel = document.createElement("div");
+        panel.className = "kakamega-location-panel";
+        panel.style.position = "absolute";
+        panel.style.top = "0";
+        panel.style.right = "0";
+        panel.style.width = "290px";
+        panel.style.height = "100%";
+        panel.style.boxSizing = "border-box";
+        panel.style.padding = "12px";
+        panel.style.background = "#171a21";
+        panel.style.color = "#f4f4f5";
+        panel.style.borderLeft = "1px solid #343640";
+        panel.style.fontFamily = '"Source Sans 3","Segoe UI",sans-serif';
+        panel.style.overflowY = "auto";
+
+        panel.innerHTML =
+            '<div style="font-size:16px;font-weight:700;margin-bottom:4px;">Location result</div>' +
+            '<div style="font-size:11px;color:#b8bbc4;margin-bottom:10px;">Click the map or enter coordinates below.</div>' +
+            '<label style="font-size:11px;font-weight:700;">Latitude</label>' +
+            '<input id="query-lat" type="number" step="0.000001" style="width:100%;box-sizing:border-box;margin:2px 0 6px;padding:6px;border-radius:4px;border:1px solid #555;background:#0e1117;color:#fff;">' +
+            '<label style="font-size:11px;font-weight:700;">Longitude</label>' +
+            '<input id="query-lng" type="number" step="0.000001" style="width:100%;box-sizing:border-box;margin:2px 0 7px;padding:6px;border-radius:4px;border:1px solid #555;background:#0e1117;color:#fff;">' +
+            '<button id="query-btn" style="width:100%;padding:7px;border:0;border-radius:4px;background:#ff4b4b;color:#fff;font-weight:700;cursor:pointer;">Check location</button>' +
+            '<div id="query-result" style="margin-top:12px;font-size:12px;line-height:1.35;">' +
+            '<div style="color:#b8bbc4;">No location selected yet.</div></div>';
+
+        parent.appendChild(panel);
+
+        const image = new Image();
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", {willReadFrequently:true});
+        let ready = false;
+        image.onload = function() {
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            ctx.drawImage(image, 0, 0);
+            ready = true;
+        };
+        image.src = __IMAGE_URL__;
+
+        function classifyPixel(r,g,b,a) {
+            if (a === 0) return null;
+            let best = null, bestDistance = Infinity;
+            for (const item of classes) {
+                const dr = r-item.rgb[0], dg = g-item.rgb[1], db = b-item.rgb[2];
+                const d = dr*dr + dg*dg + db*db;
+                if (d < bestDistance) { bestDistance = d; best = item; }
+            }
+            return best;
+        }
+
+        function pointInRing(lng, lat, ring) {
+            let inside = false;
+            for (let i=0,j=ring.length-1;i<ring.length;j=i++) {
+                const xi=ring[i][0], yi=ring[i][1], xj=ring[j][0], yj=ring[j][1];
+                const hit=((yi>lat)!==(yj>lat)) &&
+                    (lng < ((xj-xi)*(lat-yi))/((yj-yi)||1e-12)+xi);
+                if (hit) inside=!inside;
+            }
+            return inside;
+        }
+
+        function pointInPolygon(lng, lat, rings) {
+            if (!rings || !rings.length || !pointInRing(lng,lat,rings[0])) return false;
+            for (let i=1;i<rings.length;i++) if (pointInRing(lng,lat,rings[i])) return false;
+            return true;
+        }
+
+        function geometryContains(g,lng,lat) {
+            if (!g) return false;
+            if (g.type==="Polygon") return pointInPolygon(lng,lat,g.coordinates);
+            if (g.type==="MultiPolygon") return g.coordinates.some(p=>pointInPolygon(lng,lat,p));
+            return false;
+        }
+
+        function findName(collection,lng,lat) {
+            if (!collection || !collection.features) return "Unknown";
+            for (const f of collection.features) {
+                if (geometryContains(f.geometry,lng,lat)) {
+                    return (f.properties && f.properties.lookup_name) || "Unknown";
+                }
+            }
+            return "Unknown";
+        }
+
+        function haversine(lat1,lon1,lat2,lon2) {
+            const R=6371.0088, rad=Math.PI/180;
+            const p1=lat1*rad,p2=lat2*rad,dp=(lat2-lat1)*rad,dl=(lon2-lon1)*rad;
+            const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+            return 2*R*Math.asin(Math.sqrt(a));
+        }
+
+        function nearestSample(lat,lng) {
+            let best=null;
+            for (const s of samples) {
+                const d=haversine(lat,lng,s.lat,s.lng);
+                if (!best || d<best.distance) best={...s,distance:d};
+            }
+            return best;
+        }
+
+        function advice(label) {
+            const x=String(label).toLowerCase();
+            if (medium==="Water") {
+                return x.includes("unsafe")
+                    ? "At least one tested metal is predicted to exceed WHO drinking-water guidelines. Do not drink untreated; have the water tested."
+                    : "No tested metal is predicted to exceed WHO guidelines.";
+            }
+            if (x.includes("heavy")) return "High contamination is likely. Avoid growing food crops here and have the soil tested before use.";
+            if (x.includes("moderate")) return "Some contamination is likely. Test the soil before growing food crops.";
+            if (x.includes("slight")) return "Slight contamination is possible. Wash produce well and test the soil before farming.";
+            return "No contamination is predicted, the soil is safe to grow food crops.";
+        }
+
+        function query(lat,lng) {
+            const result=document.getElementById("query-result");
+            document.getElementById("query-lat").value=lat.toFixed(6);
+            document.getElementById("query-lng").value=lng.toFixed(6);
+
+            if (!ready || !rasterBounds.contains([lat,lng])) {
+                result.innerHTML='<div style="padding:8px;background:#32252a;border-radius:5px;">No prediction is available at this location.</div>';
+                return;
+            }
+
+            const sw=rasterBounds.getSouthWest(), ne=rasterBounds.getNorthEast();
+            const x=Math.max(0,Math.min(canvas.width-1,Math.floor(((lng-sw.lng)/(ne.lng-sw.lng))*canvas.width)));
+            const y=Math.max(0,Math.min(canvas.height-1,Math.floor(((ne.lat-lat)/(ne.lat-sw.lat))*canvas.height)));
+            const p=ctx.getImageData(x,y,1,1).data;
+            const status=classifyPixel(p[0],p[1],p[2],p[3]);
+            if (!status) return;
+
+            const nearest=nearestSample(lat,lng);
+            const county=findName(countyData,lng,lat);
+            const constituency=findName(constituencyData,lng,lat);
+            const ward=findName(wardData,lng,lat);
+            const uncertain=nearest && nearest.distance>5;
+
+            result.innerHTML =
+                '<div style="font-size:11px;color:#b8bbc4;margin-bottom:2px;">Predicted class</div>' +
+                '<div style="font-size:18px;font-weight:700;margin-bottom:9px;">'+status.label+'</div>' +
+                '<div><strong>Dominant metals:</strong> '+(nearest ? nearest.metals : "Not available")+'</div>' +
+                '<div><strong>County:</strong> '+county+'</div>' +
+                '<div><strong>Constituency:</strong> '+constituency+'</div>' +
+                '<div><strong>Ward:</strong> '+ward+'</div>' +
+                (nearest ? '<div><strong>Nearest sample:</strong> '+nearest.id+' ('+nearest.distance.toFixed(2)+' km)</div>' : '') +
+                '<div style="margin-top:9px;padding:8px;background:#252832;border-left:3px solid #ff4b4b;border-radius:3px;">'+advice(status.label)+'</div>' +
+                (uncertain ? '<div style="margin-top:8px;padding:7px;background:#4a3f22;border-radius:4px;"><strong>Uncertainty:</strong> This location is far from any sampled site, so the prediction is less certain.</div>' : '');
+
+            L.popup({maxWidth:220})
+                .setLatLng([lat,lng])
+                .setContent('<strong>'+status.label+'</strong>')
+                .openOn(map);
+        }
+
+        map.on("click", function(e) { query(e.latlng.lat,e.latlng.lng); });
+
+        document.getElementById("query-btn").addEventListener("click", function() {
+            const lat=parseFloat(document.getElementById("query-lat").value);
+            const lng=parseFloat(document.getElementById("query-lng").value);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            query(lat,lng);
+            map.panTo([lat,lng]);
+        });
+
+        map.fitBounds(countyBounds);
+        setTimeout(function(){ map.invalidateSize(); }, 50);
+    })();
+    {% endmacro %}
+    """
+
+    replacements = {
+        "__MEDIUM__": json.dumps(medium),
+        "__CLASSES__": json.dumps(classes, separators=(",", ":")),
+        "__SAMPLES__": json.dumps(sample_query_records(medium), separators=(",", ":")),
+        "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
+        "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
+        "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
+        "__IMAGE_URL__": json.dumps(_encode_png(rgba_image)),
+        "__SOUTH__": repr(float(bounds[0][0])),
+        "__WEST__": repr(float(bounds[0][1])),
+        "__NORTH__": repr(float(bounds[1][0])),
+        "__EAST__": repr(float(bounds[1][1])),
+        "__COUNTY_SOUTH__": repr(float(county_bounds[0][0])),
+        "__COUNTY_WEST__": repr(float(county_bounds[0][1])),
+        "__COUNTY_NORTH__": repr(float(county_bounds[1][0])),
+        "__COUNTY_EAST__": repr(float(county_bounds[1][1])),
+    }
+    for token,value in replacements.items():
+        template=template.replace(token,value)
+
+    control=MacroElement()
+    control._name="FastLocationQuery"
+    control._template=Template(template)
+    m.add_child(control)
 
 
 def page_check_location(uploaded_file, medium: str):
