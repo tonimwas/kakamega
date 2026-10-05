@@ -110,50 +110,6 @@ st.markdown("""
         margin-bottom: 0.1rem !important;
     }
 
-    /* Compact, permanently expanded layer control in the top-right. */
-    .leaflet-top.leaflet-right .leaflet-control-layers {
-        margin-top: 48px !important;
-        margin-right: 10px !important;
-        min-width: 118px !important;
-        max-width: 150px !important;
-        max-height: 180px !important;
-        overflow-y: auto !important;
-        padding: 3px 5px !important;
-        background: rgba(55,55,55,0.50) !important;
-        border: 1px solid rgba(255,255,255,0.25) !important;
-        border-radius: 4px !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.22) !important;
-        backdrop-filter: blur(1px);
-    }
-
-    .leaflet-control-layers-expanded {
-        padding: 3px 5px !important;
-    }
-
-    .leaflet-control-layers label {
-        margin: 0 !important;
-        line-height: 1.05 !important;
-        font-size: 9px !important;
-        font-weight: 700 !important;
-        color: #fff !important;
-        white-space: nowrap !important;
-    }
-
-    .leaflet-control-layers-selector {
-        width: 10px !important;
-        height: 10px !important;
-        margin: 0 3px 0 0 !important;
-        vertical-align: middle !important;
-    }
-
-    .leaflet-control-layers-separator {
-        margin: 2px 0 !important;
-        border-top: 1px solid rgba(255,255,255,0.25) !important;
-    }
-
-    .leaflet-control-layers-list {
-        margin: 0 !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -676,6 +632,81 @@ def add_sample_point_layers(m: folium.Map):
     soil_layer.add_to(m)
     water_layer.add_to(m)
     return soil_layer, water_layer
+
+
+def add_leaflet_internal_css(m: folium.Map) -> None:
+    """Style Leaflet controls inside the Folium iframe."""
+    css = """
+    <style>
+    .leaflet-top.leaflet-right .leaflet-control-layers {
+        margin-top: 48px !important;
+        margin-right: 10px !important;
+        min-width: 112px !important;
+        max-width: 145px !important;
+        max-height: 175px !important;
+        overflow-y: auto !important;
+        padding: 3px 5px !important;
+        background: rgba(58, 58, 58, 0.50) !important;
+        border: 1px solid rgba(255,255,255,0.18) !important;
+        border-radius: 4px !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.28) !important;
+        color: #ffffff !important;
+    }
+
+    .leaflet-control-layers-expanded {
+        padding: 3px 5px !important;
+        color: #ffffff !important;
+    }
+
+    .leaflet-control-layers-base,
+    .leaflet-control-layers-overlays {
+        margin: 0 !important;
+    }
+
+    .leaflet-control-layers label {
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1.02 !important;
+        font-size: 8px !important;
+        font-weight: 700 !important;
+        color: #ffffff !important;
+        white-space: nowrap !important;
+    }
+
+    .leaflet-control-layers-selector {
+        width: 9px !important;
+        height: 9px !important;
+        margin: 0 3px 0 0 !important;
+        vertical-align: middle !important;
+    }
+
+    .leaflet-control-layers-separator {
+        height: 0 !important;
+        margin: 2px 0 !important;
+        border-top: 1px solid rgba(255,255,255,0.22) !important;
+    }
+
+    .leaflet-control-layers-list {
+        margin: 0 !important;
+        color: #ffffff !important;
+    }
+
+    .leaflet-control-layers-scrollbar {
+        overflow-y: auto !important;
+    }
+
+    .leaflet-control-layers::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .leaflet-control-layers::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.35);
+        border-radius: 4px;
+    }
+    </style>
+    """
+    m.get_root().header.add_child(folium.Element(css))
 
 
 def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> folium.Map:
@@ -1422,6 +1453,7 @@ def page_interactive_map(uploaded_file):
     )
 
     folium.LayerControl(collapsed=False, position="topright").add_to(m)
+    add_leaflet_internal_css(m)
 
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
