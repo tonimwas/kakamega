@@ -14,9 +14,7 @@ from shapely.geometry import Point
 from streamlit_folium import st_folium
 
 from utils.raster_processor import (
-    ensure_water_sample_raster,
     get_raster_src,
-    is_sample_raster,
     prepare_raster_overlay,
     raster_map_center,
     sample_raster_value,
@@ -29,8 +27,7 @@ from utils.styles import (
 
 ROOT = Path(__file__).resolve().parent
 SOIL_RASTER = ROOT / "data" / "Raster" / "Training_raster.tif"
-WATER_RASTER = ROOT / "data" / "Raster" / "Water_sample.tif"
-WATER_RASTER_LEGACY = ROOT / "data" / "Raster" / "Water_sample_raster.tif"
+WATER_RASTER = ROOT / "data" / "Raster" / "Training_raster_Water.tif"
 LOGO_PATH = ROOT / "assets" / "logo.png"
 UPLOAD_DIR = ROOT / "data" / "Raster" / "uploads"
 VECTOR_DIR = ROOT / "data" / "vector"
@@ -143,7 +140,7 @@ def _admin_lookup_geojson(path_string: str, candidate_fields: tuple[str, ...]) -
         return {"type": "FeatureCollection", "features": []}
 
 
-def add_instant_raster_click(m: folium.Map, rgba_image, bounds) -> None:
+def add_instant_raster_click(m: folium.Map, rgba_image, bounds, medium: str) -> None:
     """Identify raster and admin polygons fully in-browser without Streamlit reruns."""
     if rgba_image is None or bounds is None:
         return
@@ -177,6 +174,7 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds) -> None:
         const countyData = __COUNTY_DATA__;
         const constituencyData = __CONSTITUENCY_DATA__;
         const wardData = __WARD_DATA__;
+        const classes = __CLASS_DEFINITIONS__;
 
         const image = new Image();
         const canvas = document.createElement("canvas");
@@ -241,13 +239,6 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds) -> None:
 
         function classifyPixel(r, g, b, a) {
             if (a === 0) return null;
-
-            const classes = [
-                {rgb: [76, 175, 80], label: "Clean"},
-                {rgb: [255, 235, 59], label: "Slightly contaminated"},
-                {rgb: [255, 152, 0], label: "Moderate"},
-                {rgb: [244, 67, 54], label: "Heavy contamination"}
-            ];
 
             let best = null;
             let bestDistance = Infinity;
@@ -321,6 +312,20 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds) -> None:
         "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
         "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
         "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
+        "__CLASS_DEFINITIONS__": json.dumps(
+            [
+                {"rgb": [33, 150, 243], "label": "Safe"},
+                {"rgb": [255, 235, 59], "label": "Unsafe"},
+            ]
+            if medium == "Water"
+            else [
+                {"rgb": [76, 175, 80], "label": "Clean"},
+                {"rgb": [255, 235, 59], "label": "Slightly contaminated"},
+                {"rgb": [255, 152, 0], "label": "Moderate"},
+                {"rgb": [244, 67, 54], "label": "Heavy contamination"},
+            ],
+            separators=(",", ":"),
+        ),
     }
     for token, value in replacements.items():
         template = template.replace(token, value)
@@ -350,12 +355,7 @@ def resolve_raster_path(medium: str, uploaded_file) -> str | None:
         dest = UPLOAD_DIR / f"water_{uploaded_file.name}"
         return persist_upload(uploaded_file, dest)
 
-    for candidate in (WATER_RASTER, WATER_RASTER_LEGACY):
-        if candidate.exists():
-            return str(candidate)
-    if not SOIL_RASTER.exists():
-        return None
-    return ensure_water_sample_raster(str(SOIL_RASTER), str(WATER_RASTER))
+    return str(WATER_RASTER) if WATER_RASTER.exists() else None
 
 
 def add_vector_layers(m: folium.Map) -> None:
@@ -610,17 +610,29 @@ def add_map_controls(
     m.add_child(controls)
 
 
-def add_map_legend(m: folium.Map) -> None:
-    legend = """
+def add_map_legend(m: folium.Map, medium: str = "Soil") -> None:
+    if medium == "Water":
+        legend_items = """
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#2196F3;border:1px solid #333;margin-right:6px;"></span>Safe</div>
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Unsafe</div>
+        """
+        legend_title = "Water safety"
+    else:
+        legend_items = """
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Clean</div>
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Slightly contaminated</div>
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FF9800;border:1px solid #333;margin-right:6px;"></span>Moderate</div>
+          <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#F44336;border:1px solid #333;margin-right:6px;"></span>Heavy contamination</div>
+        """
+        legend_title = "Contamination risk"
+
+    legend = f"""
     <div style="position:fixed;bottom:28px;left:12px;z-index:999;
                 background:rgba(255,255,255,0.94);padding:10px 12px;
                 border:1px solid #c4a35a;font-family:Georgia,serif;font-size:12px;
                 color:#152238;min-width:168px;box-shadow:0 2px 8px rgba(21,34,56,0.18);">
-      <div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">Contamination risk</div>
-      <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Clean</div>
-      <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Slightly contaminated</div>
-      <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FF9800;border:1px solid #333;margin-right:6px;"></span>Moderate</div>
-      <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#F44336;border:1px solid #333;margin-right:6px;"></span>Heavy contamination</div>
+      <div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">{legend_title}</div>
+      {legend_items}
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend))
@@ -751,21 +763,13 @@ def page_interactive_map(uploaded_file):
         "Medium",
         ["Soil", "Water"],
         horizontal=True,
-        help="Soil uses the training prediction raster. Water currently uses generated sample classes until the real water raster is provided.",
+        help="Switch between the soil contamination raster and the water safety raster.",
     )
 
     raster_path = resolve_raster_path(medium, uploaded_file)
     if raster_path is None:
         st.error("No soil raster found at `data/Raster/Training_raster.tif`. Upload a GeoTIFF in the sidebar to continue.")
         return
-
-    if medium == "Water" and is_sample_raster(raster_path):
-        st.markdown(
-            '<div class="notice"><b>Water layer is placeholder data.</b> '
-            "A sample raster was generated on the soil grid so the map tools can be tested. "
-            "Replace <code>data/Raster/Water_sample.tif</code> (or <code>Water_sample_raster.tif</code>) with the real water prediction when it is ready.</div>",
-            unsafe_allow_html=True,
-        )
 
     try:
         center_lat, center_lon = raster_map_center(raster_path)
@@ -792,11 +796,11 @@ def page_interactive_map(uploaded_file):
     m.fit_bounds(bounds)
 
     add_map_controls(m, overlay, bounds, initial_opacity=0.7)
-    add_map_legend(m)
+    add_map_legend(m, medium)
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
 
     # Handle raster identification entirely in the browser for instant popups.
-    add_instant_raster_click(m, rgba_image, bounds)
+    add_instant_raster_click(m, rgba_image, bounds, medium)
 
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
     st_folium(
@@ -832,7 +836,7 @@ def page_check_location(uploaded_file):
 def page_data_explorer(uploaded_file):
     st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
     st.header("Data explorer")
-    st.write("Metadata for the active prediction raster. Soil is the observed training raster; water is sample-generated until replaced.")
+    st.write("Metadata for the active soil or water prediction raster.")
     st.markdown("</div>", unsafe_allow_html=True)
 
     medium = st.radio("Raster", ["Soil", "Water"], horizontal=True)
@@ -853,8 +857,6 @@ def page_data_explorer(uploaded_file):
         st.write(f"**Width:** {metadata.get('width', 'N/A')} px")
         st.write(f"**Height:** {metadata.get('height', 'N/A')} px")
         st.write(f"**NoData:** {metadata.get('nodata', 'N/A')}")
-        if is_sample_raster(raster_path):
-            st.warning("This file is tagged as generated sample data.")
     with c2:
         bounds_obj = metadata.get("bounds")
         if bounds_obj:
@@ -876,9 +878,9 @@ def page_model_results():
     st.markdown(
         """
         - **Model type:** Random Forest classifier / spatial prediction
-        - **Mapped medium (available):** Soil
-        - **Mapped medium (placeholder):** Water
-        - **Output:** Four risk classes (1 Clean – 4 Heavy contamination)
+        - **Mapped media:** Soil and Water
+        - **Soil output:** Four classes (1 Clean – 4 Heavy contamination)
+        - **Water output:** Two classes (1 Safe, 2 Unsafe)
         - **Display CRS:** EPSG:4326 for the web map; sampling is performed in the raster native CRS (UTM zone 37S / EPSG:32737 for the current soil grid)
         """
     )
@@ -889,20 +891,22 @@ def page_methodology():
     st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
     st.header("Methodology")
     st.subheader("Data collection")
-    st.write("Soil samples were collected around artisanal gold mining sites in Kakamega County. Water predictions will use the same mapping grid when that raster is supplied.")
+    st.write("Soil and water samples were assessed around artisanal gold mining sites in Kakamega County and mapped as classified prediction rasters.")
     st.subheader("Prediction and mapping")
     st.write("A machine-learning surface was interpolated / classified and stored as a GeoTIFF. The portal reprojects that grid to WGS84 only for display.")
     st.subheader("Risk classification")
     st.markdown(
         """
-        The current soil raster is a four-class map:
+        The soil raster uses four contamination classes, while the water raster uses two safety classes:
 
-        | Class | Risk |
-        | --- | --- |
-        | 1 | Clean |
-        | 2 | Slightly contaminated |
-        | 3 | Moderate |
-        | 4 | Heavy contamination |
+        | Medium | Class | Category |
+        | --- | --- | --- |
+        | Soil | 1 | Clean |
+        | Soil | 2 | Slightly contaminated |
+        | Soil | 3 | Moderate |
+        | Soil | 4 | Heavy contamination |
+        | Water | 1 | Safe |
+        | Water | 2 | Unsafe |
         """
     )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -936,8 +940,7 @@ def page_disclaimer():
     st.header("Disclaimer")
     st.warning(
         "This application shows predicted contamination risk from a research model. "
-        "It is not a substitute for laboratory analysis, site inspection, or official environmental assessment. "
-        "The water overlay is sample-generated until the real water raster is installed."
+        "It is not a substitute for laboratory analysis, site inspection, or official environmental assessment."
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -979,7 +982,7 @@ def main():
             uploaded = st.file_uploader(
                 "Upload GeoTIFF override",
                 type=["tif", "tiff"],
-                help="Used if the bundled soil raster is missing, or to override it.",
+                help="Optional GeoTIFF override for the selected map medium.",
             )
         st.markdown("---")
         st.markdown(get_sidebar_footer_html(), unsafe_allow_html=True)
