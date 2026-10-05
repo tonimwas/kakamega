@@ -2518,15 +2518,19 @@ def add_fast_location_query(
             '0%,100%{transform:scale(.82);opacity:.72;filter:brightness(1)}' +
             '50%{transform:scale(1.18);opacity:1;filter:brightness(1.65)}' +
             '}' +
-            '.kakamega-location-dot{' +
-            'width:10px;height:10px;border-radius:50%;' +
-            'border:2px solid rgba(255,255,255,.92);' +
+            '@keyframes kakamegaUserPointPulse{' +
+            '0%,100%{transform:rotate(45deg) scale(.82);opacity:.72;filter:brightness(1)}' +
+            '50%{transform:rotate(45deg) scale(1.18);opacity:1;filter:brightness(1.7)}' +
+            '}' +
+            '.kakamega-user-point{' +
+            'width:11px;height:11px;border-radius:2px;background:#7E57C2;' +
+            'border:2px solid rgba(255,255,255,.96);' +
             'box-shadow:0 0 0 2px rgba(0,0,0,.28);' +
-            'animation:kakamegaLocationPulse 1.05s infinite ease-in-out;' +
+            'animation:kakamegaUserPointPulse 1.05s infinite ease-in-out;' +
             'transform-origin:center;' +
             '}' +
             '.kakamega-nearest-sample-dot{' +
-            'width:11px;height:11px;border-radius:50%;background:#29b6f6;' +
+            'width:11px;height:11px;border-radius:50%;' +
             'border:2px solid #fff;box-shadow:0 0 0 2px rgba(0,0,0,.30);' +
             'animation:kakamegaLocationPulse .95s infinite ease-in-out;' +
             'transform-origin:center;' +
@@ -2626,16 +2630,11 @@ def add_fast_location_query(
         }
 
         function updateQueryMarker(lat, lng, status) {
-            const rgb = status && status.rgb ? status.rgb : [255, 75, 75];
-            const color = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
-
             const icon = L.divIcon({
                 className: '',
-                html:
-                    '<div class="kakamega-location-dot" ' +
-                    'style="background:' + color + ';"></div>',
-                iconSize: [14, 14],
-                iconAnchor: [7, 7]
+                html: '<div class="kakamega-user-point"></div>',
+                iconSize: [17, 17],
+                iconAnchor: [8.5, 8.5]
             });
 
             if (queryMarker) {
@@ -2652,11 +2651,27 @@ def add_fast_location_query(
                     }
                 ).addTo(map);
             }
+
             queryMarker.unbindTooltip();
+            queryMarker.unbindPopup();
+
             queryMarker.bindTooltip(
-                (medium === "Water" ? "Water safety: " : "Contamination: ") + status.label,
+                'User selected point · ' +
+                (medium === "Water" ? "Water safety: " : "Contamination: ") +
+                status.label,
                 {direction: "top", opacity: .95}
             );
+
+            queryMarker.bindPopup(
+                '<div style="font-size:12px;color:#111;">' +
+                '<strong>User selected point</strong><br>' +
+                '<strong>' +
+                (medium === "Water" ? "Water safety: " : "Contamination: ") +
+                '</strong>' + status.label +
+                '</div>',
+                {maxWidth:220}
+            );
+            queryMarker.openPopup();
         }
 
         function showPointLoading(sampleId) {
@@ -2701,12 +2716,31 @@ def add_fast_location_query(
             }, 160);
         }
 
+        function sampleRiskColor(riskClass) {
+            const x = String(riskClass || "").trim().toLowerCase();
+
+            if (medium === "Water") {
+                if (x === "safe") return "#4CAF50";
+                if (x === "unsafe") return "#F44336";
+                return "#9E9E9E";
+            }
+
+            if (x.includes("heavy")) return "#F44336";
+            if (x.includes("moderate")) return "#FF9800";
+            if (x.includes("slight")) return "#FFEB3B";
+            if (x.includes("clean")) return "#4CAF50";
+            return "#9E9E9E";
+        }
+
         function showNearestSample(sample) {
             if (!sample) return;
 
+            const sampleColor = sampleRiskColor(sample.risk_class);
             const icon = L.divIcon({
                 className: '',
-                html: '<div class="kakamega-nearest-sample-dot"></div>',
+                html:
+                    '<div class="kakamega-nearest-sample-dot" ' +
+                    'style="background:' + sampleColor + ';"></div>',
                 iconSize: [15,15],
                 iconAnchor: [7.5,7.5]
             });
@@ -2760,9 +2794,25 @@ def add_fast_location_query(
                 });
             });
 
-            map.setView([sample.lat, sample.lng], Math.max(map.getZoom(), 15), {
-                animate: true
-            });
+            if (queryMarker) {
+                const userPoint = queryMarker.getLatLng();
+                const pairBounds = L.latLngBounds(
+                    [userPoint.lat, userPoint.lng],
+                    [sample.lat, sample.lng]
+                );
+
+                map.fitBounds(pairBounds, {
+                    padding: window.innerWidth <= 768 ? [28, 28] : [45, 45],
+                    maxZoom: 15,
+                    animate: true
+                });
+            } else {
+                map.setView(
+                    [sample.lat, sample.lng],
+                    Math.min(Math.max(map.getZoom(), 13), 15),
+                    {animate:true}
+                );
+            }
 
             setTimeout(finishPointLoad, 300);
         }
