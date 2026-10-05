@@ -1504,24 +1504,109 @@ def page_interactive_map(uploaded_file, medium: str):
     )
 
 
-def page_check_location(uploaded_file):
-    st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
-    st.header("Check my location")
-    st.write("Use the locate control on the map to centre on your GPS position, then inspect the overlay.")
-    st.markdown("</div>", unsafe_allow_html=True)
+def page_check_location(uploaded_file, medium: str):
+    st.header("Check My Location")
+    st.write(
+        "Click the map or enter latitude and longitude to see the predicted contamination risk at that place "
+        "before farming, drawing water or managing mine waste."
+    )
 
-    raster_path = resolve_raster_path("Soil", uploaded_file)
-    if raster_path and Path(raster_path).exists():
-        center_lat, center_lon = raster_map_center(raster_path)
-        m = create_base_map(center_lat, center_lon, zoom=11)
-        add_raster_overlay(m, raster_path, 0.7, "Soil contamination risk", medium="Soil")
-        add_map_legend(m)
-        folium.LayerControl().add_to(m)
-    else:
-        m = create_base_map(0.28, 34.75)
-        folium.LayerControl().add_to(m)
+    raster_path = resolve_raster_path(
+        medium,
+        uploaded_file if medium == "Soil" else None,
+    )
+    if not raster_path or not Path(raster_path).exists():
+        st.warning(f"{medium} raster data is not available.")
+        return
 
-    st_folium(m, width="stretch", height=650, returned_objects=[])
+    county_bounds = get_county_wgs84_bounds()
+    default_lat = (county_bounds[0][0] + county_bounds[1][0]) / 2.0
+    default_lon = (county_bounds[0][1] + county_bounds[1][1]) / 2.0
+
+    input_col1, input_col2, input_col3 = st.columns([1, 1, 0.7])
+    with input_col1:
+        lat = st.number_input(
+            "Latitude",
+            value=float(st.session_state.get("query_lat", default_lat)),
+            format="%.6f",
+            key=f"lat-input-{medium}",
+        )
+    with input_col2:
+        lon = st.number_input(
+            "Longitude",
+            value=float(st.session_state.get("query_lon", default_lon)),
+            format="%.6f",
+            key=f"lon-input-{medium}",
+        )
+    with input_col3:
+        st.write("")
+        st.write("")
+        check_button = st.button("Check location", use_container_width=True)
+
+    m = create_base_map(default_lat, default_lon, zoom=10)
+    rgba, bounds, metadata = (
+        prepare_water_overlay(raster_path)
+        if medium == "Water"
+        else prepare_raster_overlay(raster_path)
+    )
+    if rgba is not None and bounds is not None:
+        ImageOverlay(
+            image=_encode_png(rgba),
+            bounds=bounds,
+            opacity=0.7,
+            name=f"{medium} predicted risk",
+            show=True,
+        ).add_to(m)
+    m.fit_bounds(county_bounds)
+    add_map_legend(m, medium)
+    folium.LayerControl(collapsed=True, position="topright").add_to(m)
+    add_leaflet_internal_css(m)
+
+    map_data = st_folium(
+        m,
+        width="stretch",
+        height=470,
+        returned_objects=["last_clicked"],
+        key=f"check-location-{medium}",
+    )
+
+    clicked = map_data.get("last_clicked") if map_data else None
+    if clicked:
+        lat = float(clicked["lat"])
+        lon = float(clicked["lng"])
+        st.session_state["query_lat"] = lat
+        st.session_state["query_lon"] = lon
+
+    if not (clicked or check_button):
+        st.caption("Click the map or enter coordinates and choose Check location.")
+        return
+
+    result = sample_raster_value(raster_path, lat, lon)
+    if "error" in result:
+        st.warning("No prediction is available at this location.")
+        return
+
+    class_label = result.get("risk_label", "Unknown")
+    nearest = nearest_sample_context(lat, lon, medium)
+    dominant = nearest.get("dominant_metals", "Not available")
+    advice = class_advice(medium, class_label)
+
+    result_col1, result_col2 = st.columns(2)
+    with result_col1:
+        st.metric("Predicted class", class_label)
+    with result_col2:
+        st.metric("Dominant metals", dominant)
+
+    st.info(advice)
+
+    distance_km = nearest.get("distance_km")
+    if distance_km is not None:
+        st.caption(
+            f"Nearest published {medium.lower()} sample: "
+            f"{nearest.get('sample_id', 'N/A')} ({distance_km:.2f} km away)."
+        )
+        if distance_km > 5.0:
+            st.warning("This location is far from any sampled site, so the prediction is less certain.")
 
 
 @st.cache_data(show_spinner=False)
