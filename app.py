@@ -5,6 +5,7 @@ from pathlib import Path
 
 import folium
 import geopandas as gpd
+from branca.element import MacroElement, Template
 import streamlit as st
 from folium.plugins import Fullscreen, LocateControl, MousePosition
 from folium.raster_layers import ImageOverlay
@@ -112,108 +113,219 @@ def _encode_png(rgba_image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+@st.cache_data(show_spinner=False)
+def _admin_lookup_geojson(path_string: str, candidate_fields: tuple[str, ...]) -> dict:
+    """Return a compact WGS84 GeoJSON used only for instant browser-side lookup."""
+    path = Path(path_string)
+    if not path.exists():
+        return {"type": "FeatureCollection", "features": []}
+
+    try:
+        gdf = gpd.read_file(path)
+        if gdf.crs is not None and str(gdf.crs) != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+
+        name_field = next((field for field in candidate_fields if field in gdf.columns), None)
+        if name_field is None:
+            return {"type": "FeatureCollection", "features": []}
+
+        slim = gdf[[name_field, "geometry"]].copy()
+        slim = slim.rename(columns={name_field: "lookup_name"})
+
+        # The source ward GeoJSON is large. A small simplification keeps point
+        # identification responsive without changing the displayed vector layers.
+        slim["geometry"] = slim.geometry.simplify(0.0002, preserve_topology=True)
+        return json.loads(slim.to_json())
+    except Exception:
+        return {"type": "FeatureCollection", "features": []}
+
+
 def add_instant_raster_click(m: folium.Map, rgba_image, bounds) -> None:
-    """Add a browser-only raster identify popup with no Streamlit rerun."""
+    """Identify raster and admin polygons fully in-browser without Streamlit reruns."""
     if rgba_image is None or bounds is None:
         return
 
     image_url = _encode_png(rgba_image)
-    map_name = m.get_name()
     south, west = bounds[0]
     north, east = bounds[1]
 
-    script = f"""
-    (function() {{
-        const map = {map_name};
-        const south = {south};
-        const west = {west};
-        const north = {north};
-        const east = {east};
-        const imageUrl = {json.dumps(image_url)};
+    county_data = _admin_lookup_geojson(
+        str(COUNTY_GEOJSON),
+        ("ADM1_EN", "COUNTY", "County", "county", "NAME_1"),
+    )
+    constituency_data = _admin_lookup_geojson(
+        str(CONSTITUENCIES_GEOJSON),
+        ("ADM2_EN", "CONSTITUEN", "Constituency", "constituency", "NAME_2"),
+    )
+    ward_data = _admin_lookup_geojson(
+        str(WARDS_GEOJSON),
+        ("ward", "WARD", "Ward", "NAME", "name"),
+    )
+
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const south = __SOUTH__;
+        const west = __WEST__;
+        const north = __NORTH__;
+        const east = __EAST__;
+        const imageUrl = __IMAGE_URL__;
+        const countyData = __COUNTY_DATA__;
+        const constituencyData = __CONSTITUENCY_DATA__;
+        const wardData = __WARD_DATA__;
 
         const image = new Image();
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d", {{ willReadFrequently: true }});
+        const ctx = canvas.getContext("2d", {willReadFrequently: true});
         let imageReady = false;
 
-        image.onload = function() {{
+        image.onload = function() {
             canvas.width = image.naturalWidth;
             canvas.height = image.naturalHeight;
             ctx.drawImage(image, 0, 0);
             imageReady = true;
-        }};
+        };
         image.src = imageUrl;
 
-        function classifyPixel(r, g, b, a) {{
+        function pointInRing(lng, lat, ring) {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const xi = ring[i][0], yi = ring[i][1];
+                const xj = ring[j][0], yj = ring[j][1];
+                const intersects =
+                    ((yi > lat) !== (yj > lat)) &&
+                    (lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+                if (intersects) inside = !inside;
+            }
+            return inside;
+        }
+
+        function pointInPolygon(lng, lat, rings) {
+            if (!rings || !rings.length || !pointInRing(lng, lat, rings[0])) {
+                return false;
+            }
+            for (let i = 1; i < rings.length; i++) {
+                if (pointInRing(lng, lat, rings[i])) return false;
+            }
+            return true;
+        }
+
+        function geometryContains(geometry, lng, lat) {
+            if (!geometry) return false;
+            if (geometry.type === "Polygon") {
+                return pointInPolygon(lng, lat, geometry.coordinates);
+            }
+            if (geometry.type === "MultiPolygon") {
+                return geometry.coordinates.some(
+                    polygon => pointInPolygon(lng, lat, polygon)
+                );
+            }
+            return false;
+        }
+
+        function findAdminName(collection, lng, lat) {
+            if (!collection || !collection.features) return null;
+            for (const feature of collection.features) {
+                if (geometryContains(feature.geometry, lng, lat)) {
+                    return feature.properties && feature.properties.lookup_name
+                        ? String(feature.properties.lookup_name)
+                        : null;
+                }
+            }
+            return null;
+        }
+
+        function classifyPixel(r, g, b, a) {
             if (a === 0) return null;
 
             const classes = [
-                {{rgb: [76, 175, 80], code: 1, label: "Clean"}},
-                {{rgb: [255, 235, 59], code: 2, label: "Slightly contaminated"}},
-                {{rgb: [255, 152, 0], code: 3, label: "Moderate"}},
-                {{rgb: [244, 67, 54], code: 4, label: "Heavy contamination"}}
+                {rgb: [76, 175, 80], label: "Clean"},
+                {rgb: [255, 235, 59], label: "Slightly contaminated"},
+                {rgb: [255, 152, 0], label: "Moderate"},
+                {rgb: [244, 67, 54], label: "Heavy contamination"}
             ];
 
             let best = null;
             let bestDistance = Infinity;
-            for (const item of classes) {{
+            for (const item of classes) {
                 const dr = r - item.rgb[0];
                 const dg = g - item.rgb[1];
                 const db = b - item.rgb[2];
                 const distance = dr * dr + dg * dg + db * db;
-                if (distance < bestDistance) {{
+                if (distance < bestDistance) {
                     bestDistance = distance;
                     best = item;
-                }}
-            }}
+                }
+            }
             return best;
-        }}
+        }
 
-        map.on("click", function(e) {{
+        map.on("click", function(e) {
             if (!imageReady) return;
 
             const lat = e.latlng.lat;
             const lng = e.latlng.lng;
 
-            if (lat < south || lat > north || lng < west || lng > east) {{
+            if (lat < south || lat > north || lng < west || lng > east) {
                 return;
-            }}
+            }
 
             const xRatio = (lng - west) / (east - west);
             const yRatio = (north - lat) / (north - south);
-
-            const x = Math.max(0, Math.min(
-                canvas.width - 1,
-                Math.floor(xRatio * canvas.width)
-            ));
-            const y = Math.max(0, Math.min(
-                canvas.height - 1,
-                Math.floor(yRatio * canvas.height)
-            ));
+            const x = Math.max(
+                0,
+                Math.min(canvas.width - 1, Math.floor(xRatio * canvas.width))
+            );
+            const y = Math.max(
+                0,
+                Math.min(canvas.height - 1, Math.floor(yRatio * canvas.height))
+            );
 
             const pixel = ctx.getImageData(x, y, 1, 1).data;
             const risk = classifyPixel(pixel[0], pixel[1], pixel[2], pixel[3]);
+            if (!risk) return;
 
-            const popupHtml = risk
-                ? `<div style="font-size:12px;color:black;padding:4px 2px;">
-                       <strong>Contamination: ${{risk.label}}</strong><br>
-                       <span>Class: ${{risk.code}}</span><br>
-                       <span>Lat: ${{lat.toFixed(5)}}, Lon: ${{lng.toFixed(5)}}</span>
-                   </div>`
-                : `<div style="font-size:12px;color:black;padding:4px 2px;">
-                       <strong>No prediction at this location</strong><br>
-                       <span>Lat: ${{lat.toFixed(5)}}, Lon: ${{lng.toFixed(5)}}</span>
-                   </div>`;
+            const county = findAdminName(countyData, lng, lat) || "Unknown";
+            const constituency =
+                findAdminName(constituencyData, lng, lat) || "Unknown";
+            const ward = findAdminName(wardData, lng, lat) || "Unknown";
 
-            L.popup({{ maxWidth: 300, closeButton: true }})
+            const popupHtml = `
+                <div style="color: black; padding: 5px; margin: 0; font-size: 12px;">
+                    <strong style="font-size: 12px; color: black;">Contamination: ${risk.label}</strong><br>
+                    <div style="font-size: 12px;"><strong>County:</strong> ${county}</div>
+                    <div style="font-size: 12px;"><strong>Constituency:</strong> ${constituency}</div>
+                    <div style="font-size: 12px;"><strong>Ward:</strong> ${ward}</div>
+                </div>
+            `;
+
+            L.popup({maxWidth: 300, closeButton: true})
                 .setLatLng(e.latlng)
                 .setContent(popupHtml)
                 .openOn(map);
-        }});
-    }})();
+        });
+    })();
+    {% endmacro %}
     """
 
-    m.get_root().script.add_child(folium.Element(script))
+    replacements = {
+        "__SOUTH__": repr(float(south)),
+        "__WEST__": repr(float(west)),
+        "__NORTH__": repr(float(north)),
+        "__EAST__": repr(float(east)),
+        "__IMAGE_URL__": json.dumps(image_url),
+        "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
+        "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
+        "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
+    }
+    for token, value in replacements.items():
+        template = template.replace(token, value)
+
+    click_handler = MacroElement()
+    click_handler._name = "InstantRasterClick"
+    click_handler._template = Template(template)
+    m.add_child(click_handler)
 
 
 def persist_upload(uploaded_file, dest: Path) -> str:
