@@ -49,6 +49,30 @@ RISK_RGBA = {
     "heavy": (244, 67, 54, 255),
 }
 
+WATER_CLASS_RISK = {
+    1: "safe",
+    2: "unsafe",
+}
+
+WATER_RISK_LABELS = {
+    "safe": "Safe",
+    "unsafe": "Unsafe",
+}
+
+WATER_RISK_COLORS = {
+    "safe": "#2196F3",
+    "unsafe": "#FFEB3B",
+}
+
+WATER_RISK_RGBA = {
+    "safe": (33, 150, 243, 255),
+    "unsafe": (255, 235, 59, 255),
+}
+
+
+def _is_water_raster_path(raster_path: str) -> bool:
+    return "water" in Path(raster_path).stem.lower()
+
 WATER_SAMPLE_TAG = "SAMPLE_GENERATED_PLACEHOLDER_V2"
 TARGET_CRS = CRS.from_epsg(4326)
 
@@ -84,13 +108,28 @@ def _nodata_mask(band: np.ndarray, nodata: Optional[float]) -> np.ndarray:
     return mask
 
 
-def apply_color_classification(band: np.ndarray, nodata: Optional[float] = None) -> np.ndarray:
-    """Convert a raster band to RGBA using the 4-tier cartographic scheme."""
+def apply_color_classification(
+    band: np.ndarray,
+    nodata: Optional[float] = None,
+    water: bool = False,
+) -> np.ndarray:
+    """Convert a raster band to RGBA using the active medium's class scheme."""
     height, width = band.shape
     rgba = np.zeros((height, width, 4), dtype=np.uint8)
     invalid = _nodata_mask(band, nodata)
-    classified = _is_classified_band(band, nodata)
 
+    if water:
+        # Water raster classes: 0 = background, 1 = Safe, 2 = Unsafe.
+        invalid |= np.rint(band).astype(np.int16) == 0
+        classes = np.zeros_like(band, dtype=np.int16)
+        valid = ~invalid
+        classes[valid] = np.rint(band[valid]).astype(np.int16)
+        rgba[classes == 1] = WATER_RISK_RGBA["safe"]
+        rgba[classes == 2] = WATER_RISK_RGBA["unsafe"]
+        rgba[invalid, 3] = 0
+        return rgba
+
+    classified = _is_classified_band(band, nodata)
     if classified:
         classes = np.zeros_like(band, dtype=np.int16)
         valid = ~invalid
@@ -157,7 +196,11 @@ def prepare_raster_overlay(raster_path: str, max_dim: int = 800) -> Tuple[Option
 
         if src_crs == TARGET_CRS:
             bounds = [[src_bounds.bottom, src_bounds.left], [src_bounds.top, src_bounds.right]]
-            rgba_image = apply_color_classification(band, nodata)
+            rgba_image = apply_color_classification(
+                band,
+                nodata,
+                water=_is_water_raster_path(raster_path),
+            )
             metadata["overlay_width"] = src_width
             metadata["overlay_height"] = src_height
             return rgba_image, bounds, metadata
@@ -194,7 +237,11 @@ def prepare_raster_overlay(raster_path: str, max_dim: int = 800) -> Tuple[Option
 
         left, bottom, right, top = array_bounds(height, width, transform)
         bounds = [[float(bottom), float(left)], [float(top), float(right)]]
-        rgba_image = apply_color_classification(reprojected, nodata=np.nan)
+        rgba_image = apply_color_classification(
+            reprojected,
+            nodata=np.nan,
+            water=_is_water_raster_path(raster_path),
+        )
         metadata["overlay_width"] = width
         metadata["overlay_height"] = height
         metadata["wgs84_bounds"] = bounds
@@ -221,6 +268,24 @@ def sample_raster_value(raster_path: str, lat: float, lon: float) -> Dict[str, A
             return {"error": "No prediction at this location"}
         if not np.isfinite(value):
             return {"error": "No prediction at this location"}
+
+        if _is_water_raster_path(raster_path):
+            class_code = int(round(float(value)))
+            if class_code == 0:
+                return {"error": "No prediction at this location"}
+            if class_code not in WATER_CLASS_RISK:
+                return {"error": "Unknown water class at this location"}
+            risk_category = WATER_CLASS_RISK[class_code]
+            return {
+                "value": float(value),
+                "class_code": class_code,
+                "risk_category": risk_category,
+                "risk_label": WATER_RISK_LABELS[risk_category],
+                "color": WATER_RISK_COLORS[risk_category],
+                "coordinates": {"lat": lat, "lon": lon},
+                "raster_crs": str(src.crs),
+                "classified": True,
+            }
 
         classified = src.dtypes[0] in ("uint8", "int8", "uint16", "int16") and int(round(float(value))) in CLASS_RISK
         risk_category = get_risk_category(float(value), classified=classified)
