@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import folium
+import geopandas as gpd
 import streamlit as st
 from folium.plugins import Fullscreen, LocateControl, MousePosition
 from folium.raster_layers import ImageOverlay
@@ -30,6 +31,10 @@ WATER_RASTER = ROOT / "data" / "Raster" / "Water_sample.tif"
 WATER_RASTER_LEGACY = ROOT / "data" / "Raster" / "Water_sample_raster.tif"
 LOGO_PATH = ROOT / "assets" / "logo.png"
 UPLOAD_DIR = ROOT / "data" / "Raster" / "uploads"
+VECTOR_DIR = ROOT / "data" / "vector"
+WARDS_GEOJSON = VECTOR_DIR / "Wards.geojson"
+CONSTITUENCIES_GEOJSON = VECTOR_DIR / "Constituencies.geojson"
+COUNTY_GEOJSON = VECTOR_DIR / "KakamegaCounty.geojson"
 
 st.set_page_config(
     page_title="Kakamega Heavy Metal Risk Assessment",
@@ -133,6 +138,62 @@ def resolve_raster_path(medium: str, uploaded_file) -> str | None:
     return ensure_water_sample_raster(str(SOIL_RASTER), str(WATER_RASTER))
 
 
+def add_vector_layers(m: folium.Map) -> None:
+    """Add vector layers (wards, constituencies, county) to the map with layer control."""
+    # Add Wards layer with thin grey line
+    if WARDS_GEOJSON.exists():
+        try:
+            wards_layer = folium.FeatureGroup(name="Wards")
+            folium.GeoJson(
+                str(WARDS_GEOJSON),
+                style_function=lambda x: {
+                    'fillColor': 'transparent',
+                    'color': '#808080',
+                    'weight': 0.5,
+                    'fillOpacity': 0.0,
+                },
+                tooltip=folium.GeoJsonTooltip(fields=['ward'], aliases=['Ward']),
+            ).add_to(wards_layer)
+            wards_layer.add_to(m)
+        except Exception as e:
+            pass
+
+    # Add Constituencies layer
+    if CONSTITUENCIES_GEOJSON.exists():
+        try:
+            constituencies_layer = folium.FeatureGroup(name="Constituencies")
+            folium.GeoJson(
+                str(CONSTITUENCIES_GEOJSON),
+                style_function=lambda x: {
+                    'fillColor': '#ff7800',
+                    'color': '#000000',
+                    'weight': 1.5,
+                    'fillOpacity': 0.2,
+                },
+                tooltip=folium.GeoJsonTooltip(fields=['ADM2_EN'], aliases=['Constituency']),
+            ).add_to(constituencies_layer)
+            constituencies_layer.add_to(m)
+        except Exception as e:
+            pass
+
+    # Add County boundary layer
+    if COUNTY_GEOJSON.exists():
+        try:
+            county_layer = folium.FeatureGroup(name="Kakamega County Boundary")
+            folium.GeoJson(
+                str(COUNTY_GEOJSON),
+                style_function=lambda x: {
+                    'fillColor': '#e31a1c',
+                    'color': '#e31a1c',
+                    'weight': 3,
+                    'fillOpacity': 0.0,
+                },
+            ).add_to(county_layer)
+            county_layer.add_to(m)
+        except Exception as e:
+            pass
+
+
 def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> folium.Map:
     m = folium.Map(
         location=[center_lat, center_lon],
@@ -177,6 +238,10 @@ def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> fol
         lat_formatter="function(num) {return L.Util.formatNum(num, 5);}",
         lng_formatter="function(num) {return L.Util.formatNum(num, 5);}",
     ).add_to(m)
+
+    # Add vector layers
+    add_vector_layers(m)
+
     return m
 
 

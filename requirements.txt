@@ -7,4 +7,4 @@ matplotlib>=3.8.0
 branca>=0.7.0
 pyproj>=3.6.0
 pillow>=10.0.0
-    `
+geopandas>=0.14.0

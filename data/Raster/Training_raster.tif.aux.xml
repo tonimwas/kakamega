@@ -10,7 +10,7 @@
         <BucketCount>4</BucketCount>
         <IncludeOutOfRange>1</IncludeOutOfRange>
         <Approximate>0</Approximate>
-        <HistCounts>20533|132182|337179|124486</HistCounts>
+        <HistCounts>18524|179111|485056|132709</HistCounts>
       </HistItem>
     </Histograms>
   </PAMRasterBand>
