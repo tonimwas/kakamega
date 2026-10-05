@@ -466,7 +466,7 @@ def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> fol
 
 
 def add_raster_overlay(m: folium.Map, raster_path: str, opacity: float, layer_name: str):
-    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
+    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path, medium=medium)
     if rgba_image is None or bounds is None:
         return None, metadata, None
 
@@ -629,7 +629,7 @@ def add_map_legend(m: folium.Map, medium: str = "Soil") -> None:
         legend_title = "Contamination risk"
 
     legend = f"""
-    <div style="position:fixed;bottom:28px;left:12px;z-index:999;
+    <div style="position:fixed;bottom:46px;right:12px;z-index:999;
                 background:rgba(255,255,255,0.94);padding:10px 12px;
                 border:1px solid #c4a35a;font-family:Georgia,serif;font-size:12px;
                 color:#152238;min-width:168px;box-shadow:0 2px 8px rgba(21,34,56,0.18);">
@@ -779,7 +779,7 @@ def page_interactive_map(uploaded_file):
         center_lat, center_lon = 0.28, 34.75
 
     m = create_base_map(center_lat, center_lon, zoom=10)
-    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
+    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path, medium=medium)
     if rgba_image is None or bounds is None:
         st.error(f"Failed to load raster overlay: {metadata.get('error', 'Unknown error')}")
         return
@@ -825,7 +825,7 @@ def page_check_location(uploaded_file):
     if raster_path and Path(raster_path).exists():
         center_lat, center_lon = raster_map_center(raster_path)
         m = create_base_map(center_lat, center_lon, zoom=11)
-        add_raster_overlay(m, raster_path, 0.7, "Soil contamination risk")
+        add_raster_overlay(m, raster_path, 0.7, "Soil contamination risk", medium="Soil")
         add_map_legend(m)
         folium.LayerControl().add_to(m)
     else:
@@ -847,7 +847,7 @@ def page_data_explorer(uploaded_file):
         st.warning("Raster data is not available.")
         return
 
-    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
+    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path, medium=medium)
     if metadata.get("error"):
         st.error(metadata["error"])
         return
