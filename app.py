@@ -298,6 +298,52 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds, medium: str) -> 
             return best;
         }
 
+        function pointInRing(lng, lat, ring) {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const xi = ring[i][0], yi = ring[i][1];
+                const xj = ring[j][0], yj = ring[j][1];
+                const intersects =
+                    ((yi > lat) !== (yj > lat)) &&
+                    (lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+                if (intersects) inside = !inside;
+            }
+            return inside;
+        }
+
+        function pointInPolygon(lng, lat, rings) {
+            if (!rings || !rings.length || !pointInRing(lng, lat, rings[0])) return false;
+            for (let i = 1; i < rings.length; i++) {
+                if (pointInRing(lng, lat, rings[i])) return false;
+            }
+            return true;
+        }
+
+        function geometryContains(geometry, lng, lat) {
+            if (!geometry) return false;
+            if (geometry.type === "Polygon") {
+                return pointInPolygon(lng, lat, geometry.coordinates);
+            }
+            if (geometry.type === "MultiPolygon") {
+                return geometry.coordinates.some(
+                    polygon => pointInPolygon(lng, lat, polygon)
+                );
+            }
+            return false;
+        }
+
+        function findAdminName(collection, lng, lat) {
+            if (!collection || !collection.features) return "Unknown";
+            for (const feature of collection.features) {
+                if (geometryContains(feature.geometry, lng, lat)) {
+                    return feature.properties && feature.properties.lookup_name
+                        ? String(feature.properties.lookup_name)
+                        : "Unknown";
+                }
+            }
+            return "Unknown";
+        }
+
         map.on("click", function(e) {
             if (!imageReady) return;
 
@@ -391,17 +437,10 @@ def persist_upload(uploaded_file, dest: Path) -> str:
     return str(dest)
 
 
-def resolve_raster_path(medium: str, uploaded_file) -> str | None:
+def resolve_raster_path(medium: str, uploaded_file=None) -> str | None:
+    """Return the bundled project raster for the selected medium."""
     if medium == "Soil":
-        if uploaded_file is not None:
-            dest = UPLOAD_DIR / f"soil_{uploaded_file.name}"
-            return persist_upload(uploaded_file, dest)
         return str(SOIL_RASTER) if SOIL_RASTER.exists() else None
-
-    if uploaded_file is not None:
-        dest = UPLOAD_DIR / f"water_{uploaded_file.name}"
-        return persist_upload(uploaded_file, dest)
-
     return str(WATER_RASTER) if WATER_RASTER.exists() else None
 
 
@@ -984,6 +1023,19 @@ def add_single_medium_controls(
         ]
     )
 
+    county_data = _admin_lookup_geojson(
+        str(COUNTY_GEOJSON),
+        ("ADM1_EN", "COUNTY", "County", "county", "NAME_1"),
+    )
+    constituency_data = _admin_lookup_geojson(
+        str(CONSTITUENCIES_GEOJSON),
+        ("ADM2_EN", "CONSTITUEN", "Constituency", "constituency", "NAME_2"),
+    )
+    ward_data = _admin_lookup_geojson(
+        str(WARDS_GEOJSON),
+        ("ward", "WARD", "Ward", "NAME", "name"),
+    )
+
     template = """
     {% macro script(this, kwargs) %}
     (function() {
@@ -992,6 +1044,9 @@ def add_single_medium_controls(
         const samples = __SAMPLES__;
         const medium = __MEDIUM__;
         const classes = __CLASSES__;
+        const countyData = __COUNTY_DATA__;
+        const constituencyData = __CONSTITUENCY_DATA__;
+        const wardData = __WARD_DATA__;
         const rasterBounds = L.latLngBounds(
             [__SOUTH__, __WEST__],
             [__NORTH__, __EAST__]
@@ -1160,12 +1215,26 @@ def add_single_medium_controls(
             if (!status) return;
 
             const title = medium === "Water" ? "Water safety" : "Contamination";
-            L.popup({maxWidth: 250})
+            const county = findAdminName(countyData, e.latlng.lng, e.latlng.lat);
+            const constituency = findAdminName(
+                constituencyData,
+                e.latlng.lng,
+                e.latlng.lat
+            );
+            const ward = findAdminName(wardData, e.latlng.lng, e.latlng.lat);
+
+            const popupHtml =
+                '<div style="color:black;padding:5px;margin:0;font-size:12px;">' +
+                '<strong style="font-size:12px;color:black;">' +
+                title + ': ' + status.label + '</strong><br>' +
+                '<div><strong>County:</strong> ' + county + '</div>' +
+                '<div><strong>Constituency:</strong> ' + constituency + '</div>' +
+                '<div><strong>Ward:</strong> ' + ward + '</div>' +
+                '</div>';
+
+            L.popup({maxWidth: 300, closeButton: true})
                 .setLatLng(e.latlng)
-                .setContent(
-                    '<div style="font-size:12px;color:#111;"><strong>' +
-                    title + ': ' + status.label + '</strong></div>'
-                )
+                .setContent(popupHtml)
                 .openOn(map);
         });
     })();
@@ -1177,6 +1246,9 @@ def add_single_medium_controls(
         "__SAMPLES__": sample_layer.get_name(),
         "__MEDIUM__": json.dumps(medium),
         "__CLASSES__": json.dumps(classes, separators=(",", ":")),
+        "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
+        "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
+        "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
         "__IMAGE_URL__": json.dumps(image_url),
         "__SOUTH__": repr(float(bounds[0][0])),
         "__WEST__": repr(float(bounds[0][1])),
@@ -3242,13 +3314,6 @@ def main():
         else:
             st.caption("Random Forest · WHO drinking-water guidelines + NEMA zinc guideline")
 
-        with st.expander("Raster file"):
-            uploaded = st.file_uploader(
-                "Upload GeoTIFF override",
-                type=["tif", "tiff"],
-                help="Optional GeoTIFF override for the selected map medium.",
-            )
-
         st.markdown("---")
         st.markdown(get_sidebar_footer_html(), unsafe_allow_html=True)
 
@@ -3256,11 +3321,11 @@ def main():
         render_project_header()
 
     if page == "Interactive Map":
-        page_interactive_map(uploaded, medium)
+        page_interactive_map(None, medium)
     elif page == "Check My Location":
-        page_check_location(uploaded, medium)
+        page_check_location(None, medium)
     elif page == "Data Explorer":
-        page_data_explorer(uploaded, medium)
+        page_data_explorer(None, medium)
     elif page == "Model Results":
         page_model_results(medium)
     elif page == "Methodology":
