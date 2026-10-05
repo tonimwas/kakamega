@@ -1917,7 +1917,6 @@ def render_click_marker(m: folium.Map, click: dict, raster_path: str, medium: st
 
 
 def page_interactive_map(uploaded_file, medium: str):
-    st.session_state.pop("medium_switch_loading", None)
     loading_placeholder = map_loading_placeholder(
         600,
         f"Loading {medium.lower()} map",
@@ -3196,9 +3195,10 @@ def add_map_loading_overlay(
     m.add_child(control)
 
 
-def install_browser_transition_controller(current_page: str) -> None:
+def install_browser_transition_controller(current_page: str, render_id: int) -> None:
     """Show a black transition immediately on sidebar radio clicks."""
     page_json = json.dumps(current_page)
+    render_json = json.dumps(int(render_id))
     has_map = current_page in {"Interactive Map", "Check My Location", "About the Project"}
     has_map_json = json.dumps(has_map)
 
@@ -3208,6 +3208,7 @@ def install_browser_transition_controller(current_page: str) -> None:
         const doc = window.parent.document;
         const win = window.parent;
         const currentPage = {page_json};
+        const currentRenderId = {render_json};
         const currentPageHasMap = {has_map_json};
 
         function getMain() {{
@@ -3454,14 +3455,6 @@ def map_loading_placeholder(height: int, text: str):
     return placeholder
 
 
-def mark_medium_loading() -> None:
-    st.session_state["medium_switch_loading"] = True
-
-
-def mark_page_loading() -> None:
-    st.session_state["page_switch_loading"] = True
-
-
 def wave_loader_html(text: str = "Loading map") -> str:
     return f"""
     <div class="wave-loader-wrap">
@@ -3553,7 +3546,6 @@ def main():
             label_visibility="collapsed",
             index=0,
             key="active_page",
-            on_change=mark_page_loading,
         )
 
         st.markdown("#### Soil / Water")
@@ -3563,7 +3555,6 @@ def main():
             horizontal=True,
             label_visibility="collapsed",
             key="active_medium",
-            on_change=mark_medium_loading,
         )
 
         if medium == "Soil":
@@ -3574,64 +3565,12 @@ def main():
         st.markdown("---")
         st.markdown(get_sidebar_footer_html(), unsafe_allow_html=True)
 
+    render_id = int(st.session_state.get("_render_id", 0)) + 1
+    st.session_state["_render_id"] = render_id
+
+    install_browser_transition_controller(page, render_id)
+
     content_slot = st.empty()
-
-    page_changed = st.session_state.pop("page_switch_loading", False)
-    if page_changed:
-        content_slot.markdown(
-            f"""
-            <style>
-            @keyframes kakamega-page-wave {{
-                0%, 60%, 100% {{ transform: translateY(0); opacity: 0.45; }}
-                30% {{ transform: translateY(-7px); opacity: 1; }}
-            }}
-            .kakamega-page-preload {{
-                min-height: 520px;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-                border-radius:8px;
-                background:#11151b;
-                border:1px solid #2d3039;
-            }}
-            .kakamega-page-preload-inner {{
-                display:flex;
-                align-items:center;
-                gap:7px;
-                padding:10px 14px;
-                border-radius:8px;
-                background:rgba(14,17,23,0.78);
-                color:#f4f4f5;
-                font-family:"Source Sans 3","Segoe UI",sans-serif;
-                font-size:13px;
-                font-weight:700;
-                box-shadow:0 2px 10px rgba(0,0,0,0.28);
-            }}
-            .kakamega-page-dot {{
-                width:7px;
-                height:7px;
-                border-radius:50%;
-                background:#ff4b4b;
-                display:inline-block;
-                animation:kakamega-page-wave 0.9s infinite ease-in-out;
-            }}
-            .kakamega-page-dot:nth-of-type(2) {{ animation-delay:0.14s; }}
-            .kakamega-page-dot:nth-of-type(3) {{ animation-delay:0.28s; }}
-            </style>
-            <div class="kakamega-page-preload">
-                <div class="kakamega-page-preload-inner">
-                    <span>Loading {page.lower()}</span>
-                    <span class="kakamega-page-dot"></span>
-                    <span class="kakamega-page-dot"></span>
-                    <span class="kakamega-page-dot"></span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # Replace the previous page (or transition loader) in one main-content slot.
-    content_slot.empty()
     with content_slot.container():
         if page != "Key Statistics":
             render_project_header()
@@ -3652,6 +3591,14 @@ def main():
             page_statistics(medium)
         else:
             page_disclaimer()
+
+        st.markdown(
+            f'<span id="kakamega-page-ready" '
+            f'data-page="{page}" data-render="{render_id}" '
+            f'style="display:none;"></span>',
+            unsafe_allow_html=True,
+        )
+
 
 
 if __name__ == "__main__":
