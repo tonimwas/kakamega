@@ -891,6 +891,243 @@ def add_raster_overlay(
     return overlay, metadata, bounds
 
 
+def add_single_medium_controls(
+    m: folium.Map,
+    overlay: ImageOverlay,
+    rgba_image,
+    bounds,
+    county_bounds,
+    sample_layer,
+    medium: str,
+) -> None:
+    """Fast browser-only controls for one already-selected medium."""
+    image_url = _encode_png(rgba_image)
+    classes = (
+        [
+            {"rgb": [76, 175, 80], "label": "Safe"},
+            {"rgb": [244, 67, 54], "label": "Unsafe"},
+        ]
+        if medium == "Water"
+        else [
+            {"rgb": [76, 175, 80], "label": "Clean"},
+            {"rgb": [255, 235, 59], "label": "Slightly contaminated"},
+            {"rgb": [255, 152, 0], "label": "Moderate"},
+            {"rgb": [244, 67, 54], "label": "Heavy contamination"},
+        ]
+    )
+
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const overlay = __OVERLAY__;
+        const samples = __SAMPLES__;
+        const medium = __MEDIUM__;
+        const classes = __CLASSES__;
+        const rasterBounds = L.latLngBounds(
+            [__SOUTH__, __WEST__],
+            [__NORTH__, __EAST__]
+        );
+        const countyBounds = L.latLngBounds(
+            [__COUNTY_SOUTH__, __COUNTY_WEST__],
+            [__COUNTY_NORTH__, __COUNTY_EAST__]
+        );
+
+        let samplesVisible = false;
+        let currentOpacity = 0.7;
+
+        const image = new Image();
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", {willReadFrequently: true});
+        let ready = false;
+        image.onload = function() {
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            ctx.drawImage(image, 0, 0);
+            ready = true;
+        };
+        image.src = __IMAGE_URL__;
+
+        function classifyPixel(r, g, b, a) {
+            if (a === 0) return null;
+            let best = null;
+            let bestDistance = Infinity;
+            for (const item of classes) {
+                const dr = r - item.rgb[0];
+                const dg = g - item.rgb[1];
+                const db = b - item.rgb[2];
+                const distance = dr * dr + dg * dg + db * db;
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = item;
+                }
+            }
+            return best;
+        }
+
+        const SampleToggle = L.Control.extend({
+            options: {position: "topleft"},
+            onAdd: function() {
+                const container = L.DomUtil.create("div", "kakamega-sample-toggle");
+                container.style.display = "flex";
+                container.style.alignItems = "center";
+                container.style.gap = "7px";
+                container.style.background = "rgba(255,255,255,0.92)";
+                container.style.color = "#222";
+                container.style.padding = "5px 9px";
+                container.style.borderRadius = "4px";
+                container.style.boxShadow = "0 1px 5px rgba(0,0,0,0.35)";
+                container.style.cursor = "pointer";
+                container.style.fontSize = "12px";
+                container.style.fontWeight = "600";
+                container.style.whiteSpace = "nowrap";
+                container.style.opacity = "0.68";
+
+                const eye = L.DomUtil.create("span", "", container);
+                eye.style.width = "19px";
+                eye.style.height = "14px";
+                eye.style.position = "relative";
+                eye.innerHTML =
+                    '<svg width="19" height="14" viewBox="0 0 24 18">' +
+                    '<path d="M1 9C4.2 3.8 7.8 1.5 12 1.5S19.8 3.8 23 9c-3.2 5.2-6.8 7.5-11 7.5S4.2 14.2 1 9Z" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+                    '<circle cx="12" cy="9" r="3.2" fill="currentColor"/>' +
+                    '</svg>' +
+                    '<span class="eye-slash" style="position:absolute;left:8px;top:-3px;width:2px;height:20px;background:currentColor;transform:rotate(-45deg);"></span>';
+
+                const label = L.DomUtil.create("span", "sample-label", container);
+                const mediumName = medium.toLowerCase();
+                label.textContent = "View " + mediumName + " sample points";
+
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.on(container, "click", function(e) {
+                    L.DomEvent.preventDefault(e);
+                    samplesVisible = !samplesVisible;
+                    const slash = container.querySelector(".eye-slash");
+                    if (samplesVisible) {
+                        samples.addTo(map);
+                        container.style.opacity = "1";
+                        if (slash) slash.style.display = "none";
+                        label.textContent = "Hide " + mediumName + " sample points";
+                    } else {
+                        if (map.hasLayer(samples)) map.removeLayer(samples);
+                        container.style.opacity = "0.68";
+                        if (slash) slash.style.display = "block";
+                        label.textContent = "View " + mediumName + " sample points";
+                    }
+                });
+                return container;
+            }
+        });
+        map.addControl(new SampleToggle());
+
+        const CenterControl = L.Control.extend({
+            options: {position: "topleft"},
+            onAdd: function() {
+                const container = L.DomUtil.create("div", "leaflet-bar");
+                const btn = L.DomUtil.create("a", "", container);
+                btn.href = "#";
+                btn.title = "Fit Kakamega County";
+                btn.innerHTML = "⌖";
+                btn.style.fontSize = "22px";
+                btn.style.width = "30px";
+                btn.style.height = "30px";
+                btn.style.lineHeight = "30px";
+                btn.style.textAlign = "center";
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.on(btn, "click", function(e) {
+                    L.DomEvent.preventDefault(e);
+                    map.fitBounds(countyBounds, {animate: true, duration: 0.2, padding: [8,8]});
+                });
+                return container;
+            }
+        });
+        map.addControl(new CenterControl());
+
+        const OpacityControl = L.Control.extend({
+            options: {position: "topright"},
+            onAdd: function() {
+                const container = L.DomUtil.create("div", "");
+                container.style.background = "transparent";
+                container.style.display = "flex";
+                container.style.alignItems = "center";
+                container.style.gap = "6px";
+
+                const icon = L.DomUtil.create("span", "", container);
+                icon.innerHTML = "◐";
+                icon.style.color = "#fff";
+                icon.style.fontSize = "17px";
+                icon.style.textShadow = "0 1px 2px rgba(0,0,0,0.65)";
+
+                const slider = L.DomUtil.create("input", "", container);
+                slider.type = "range";
+                slider.min = "0.10";
+                slider.max = "1.00";
+                slider.step = "0.05";
+                slider.value = "0.70";
+                slider.style.width = "105px";
+                slider.style.cursor = "pointer";
+                slider.style.accentColor = "#fff";
+                slider.addEventListener("input", function() {
+                    currentOpacity = parseFloat(slider.value);
+                    overlay.setOpacity(currentOpacity);
+                });
+
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+        map.addControl(new OpacityControl());
+
+        map.on("click", function(e) {
+            if (!ready || !rasterBounds.contains(e.latlng)) return;
+            const sw = rasterBounds.getSouthWest();
+            const ne = rasterBounds.getNorthEast();
+            const x = Math.max(0, Math.min(canvas.width - 1,
+                Math.floor(((e.latlng.lng - sw.lng) / (ne.lng - sw.lng)) * canvas.width)));
+            const y = Math.max(0, Math.min(canvas.height - 1,
+                Math.floor(((ne.lat - e.latlng.lat) / (ne.lat - sw.lat)) * canvas.height)));
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            const status = classifyPixel(pixel[0], pixel[1], pixel[2], pixel[3]);
+            if (!status) return;
+
+            const title = medium === "Water" ? "Water safety" : "Contamination";
+            L.popup({maxWidth: 250})
+                .setLatLng(e.latlng)
+                .setContent(
+                    '<div style="font-size:12px;color:#111;"><strong>' +
+                    title + ': ' + status.label + '</strong></div>'
+                )
+                .openOn(map);
+        });
+    })();
+    {% endmacro %}
+    """
+
+    replacements = {
+        "__OVERLAY__": overlay.get_name(),
+        "__SAMPLES__": sample_layer.get_name(),
+        "__MEDIUM__": json.dumps(medium),
+        "__CLASSES__": json.dumps(classes, separators=(",", ":")),
+        "__IMAGE_URL__": json.dumps(image_url),
+        "__SOUTH__": repr(float(bounds[0][0])),
+        "__WEST__": repr(float(bounds[0][1])),
+        "__NORTH__": repr(float(bounds[1][0])),
+        "__EAST__": repr(float(bounds[1][1])),
+        "__COUNTY_SOUTH__": repr(float(county_bounds[0][0])),
+        "__COUNTY_WEST__": repr(float(county_bounds[0][1])),
+        "__COUNTY_NORTH__": repr(float(county_bounds[1][0])),
+        "__COUNTY_EAST__": repr(float(county_bounds[1][1])),
+    }
+    for token, value in replacements.items():
+        template = template.replace(token, value)
+
+    controls = MacroElement()
+    controls._name = "SingleMediumControls"
+    controls._template = Template(template)
+    m.add_child(controls)
+
+
 def add_interactive_medium_controls(
     m: folium.Map,
     soil_overlay: ImageOverlay,
