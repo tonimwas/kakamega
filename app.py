@@ -638,17 +638,9 @@ def nearest_sample_context(lat: float, lon: float, medium: str) -> dict:
 
 
 def add_sample_point_layers(m: folium.Map):
-    """Add hidden soil and water sample layers with class-matched symbols."""
-    soil_layer = folium.FeatureGroup(
-        name="Soil sample points",
-        show=False,
-        control=False,
-    )
-    water_layer = folium.FeatureGroup(
-        name="Water sample points",
-        show=False,
-        control=False,
-    )
+    """Add hidden soil and water sample layers with guide-compliant popups."""
+    soil_layer = folium.FeatureGroup(name="Soil sample points", show=False, control=False)
+    water_layer = folium.FeatureGroup(name="Water sample points", show=False, control=False)
 
     soil_gdf = load_sample_points(str(SOIL_SAMPLE_POINTS))
     if not soil_gdf.empty:
@@ -656,14 +648,19 @@ def add_sample_point_layers(m: folium.Map):
             geom = row.geometry
             if geom is None or geom.is_empty:
                 continue
-            sample_id = row.get("ID", "")
-            category = row.get("Overall_cl", "")
-            popup = (
-                "<div style='font-size:12px;color:#111;'>"
-                f"<strong>Soil sample: {sample_id}</strong><br>"
-                f"<strong>Class:</strong> {category}"
-                "</div>"
-            )
+            sample_id = str(row.get("ID", ""))
+            category = str(row.get("Overall_cl", ""))
+            metals = sample_dominant_metals(sample_id, "Soil")
+            advice = class_advice("Soil", category)
+            popup = f"""
+            <div style="font-size:12px;color:#111;min-width:230px;">
+                <strong>Soil sample: {sample_id}</strong><br>
+                <strong>Coordinates:</strong> {float(geom.y):.6f}, {float(geom.x):.6f}<br>
+                <strong>Class:</strong> {category}<br>
+                <strong>Dominant metal(s):</strong> {metals}<br>
+                <strong>Advice:</strong> {advice}
+            </div>
+            """
             folium.CircleMarker(
                 location=[float(geom.y), float(geom.x)],
                 radius=5,
@@ -672,7 +669,7 @@ def add_sample_point_layers(m: folium.Map):
                 fill=True,
                 fill_color=_soil_sample_color(category),
                 fill_opacity=0.95,
-                popup=folium.Popup(popup, max_width=260),
+                popup=folium.Popup(popup, max_width=320),
             ).add_to(soil_layer)
 
     water_gdf = load_sample_points(str(WATER_SAMPLE_POINTS))
@@ -681,14 +678,19 @@ def add_sample_point_layers(m: folium.Map):
             geom = row.geometry
             if geom is None or geom.is_empty:
                 continue
-            sample_id = row.get("ID", "")
-            category = row.get("Safety_cla", "")
-            popup = (
-                "<div style='font-size:12px;color:#111;'>"
-                f"<strong>Water sample: {sample_id}</strong><br>"
-                f"<strong>Safety:</strong> {category}"
-                "</div>"
-            )
+            sample_id = str(row.get("ID", ""))
+            category = str(row.get("Safety_cla", ""))
+            metals = sample_dominant_metals(sample_id, "Water")
+            advice = class_advice("Water", category)
+            popup = f"""
+            <div style="font-size:12px;color:#111;min-width:230px;">
+                <strong>Water sample: {sample_id}</strong><br>
+                <strong>Coordinates:</strong> {float(geom.y):.6f}, {float(geom.x):.6f}<br>
+                <strong>Class:</strong> {category}<br>
+                <strong>Dominant metal(s):</strong> {metals}<br>
+                <strong>Advice:</strong> {advice}
+            </div>
+            """
             folium.CircleMarker(
                 location=[float(geom.y), float(geom.x)],
                 radius=5,
@@ -697,7 +699,7 @@ def add_sample_point_layers(m: folium.Map):
                 fill=True,
                 fill_color=_water_sample_color(category),
                 fill_opacity=0.95,
-                popup=folium.Popup(popup, max_width=260),
+                popup=folium.Popup(popup, max_width=320),
             ).add_to(water_layer)
 
     soil_layer.add_to(m)
