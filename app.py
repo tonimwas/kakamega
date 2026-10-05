@@ -2530,7 +2530,17 @@ def add_fast_location_query(
             'border:2px solid #fff;box-shadow:0 0 0 2px rgba(0,0,0,.30);' +
             'animation:kakamegaLocationPulse .95s infinite ease-in-out;' +
             'transform-origin:center;' +
-            '}';
+            '}' +
+            '@keyframes kakamegaPointLoadWave{' +
+            '0%,60%,100%{transform:translateY(0);opacity:.42}' +
+            '30%{transform:translateY(-7px);opacity:1}' +
+            '}' +
+            '.kakamega-point-dot{' +
+            'width:7px;height:7px;border-radius:50%;background:#ff4b4b;' +
+            'display:inline-block;animation:kakamegaPointLoadWave .9s infinite ease-in-out;' +
+            '}' +
+            '.kakamega-point-dot:nth-of-type(2){animation-delay:.14s}' +
+            '.kakamega-point-dot:nth-of-type(3){animation-delay:.28s}';
         document.head.appendChild(markerStyle);
 
         image.onload = function() {
@@ -2649,6 +2659,48 @@ def add_fast_location_query(
             );
         }
 
+        function showPointLoading(sampleId) {
+            const old = body.querySelector(".kakamega-point-loading");
+            if (old) old.remove();
+
+            const overlay = document.createElement("div");
+            overlay.className = "kakamega-point-loading";
+            overlay.style.position = "absolute";
+            overlay.style.left = mapEl.style.left || "0";
+            overlay.style.top = mapEl.style.top || "0";
+            overlay.style.width = mapEl.style.width || "100%";
+            overlay.style.height = mapEl.style.height || "100%";
+            overlay.style.zIndex = "2600";
+            overlay.style.display = "flex";
+            overlay.style.alignItems = "center";
+            overlay.style.justifyContent = "center";
+            overlay.style.background = "rgba(14,17,23,.78)";
+            overlay.style.pointerEvents = "none";
+
+            overlay.innerHTML =
+                '<div style="display:flex;align-items:center;gap:7px;padding:10px 14px;' +
+                'border-radius:8px;background:rgba(18,21,28,.96);color:#f4f4f5;' +
+                'font-family:Source Sans 3,Segoe UI,sans-serif;font-size:13px;font-weight:700;' +
+                'box-shadow:0 2px 12px rgba(0,0,0,.34);">' +
+                '<span>Loading ' + sampleId + ' location</span>' +
+                '<span class="kakamega-point-dot"></span>' +
+                '<span class="kakamega-point-dot"></span>' +
+                '<span class="kakamega-point-dot"></span>' +
+                '</div>';
+
+            body.appendChild(overlay);
+            return overlay;
+        }
+
+        function removePointLoading(overlay) {
+            if (!overlay || !overlay.parentNode) return;
+            overlay.style.transition = "opacity 150ms ease";
+            overlay.style.opacity = "0";
+            setTimeout(function() {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            }, 160);
+        }
+
         function showNearestSample(sample) {
             if (!sample) return;
 
@@ -2682,9 +2734,37 @@ def add_fast_location_query(
                     opacity: .95
                 }
             );
+            const pointLoader = showPointLoading(sample.id);
+
+            let settled = false;
+            function finishPointLoad() {
+                if (settled) return;
+
+                const tiles = Array.from(mapEl.querySelectorAll("img.leaflet-tile"));
+                const tilesReady =
+                    tiles.length === 0 ||
+                    tiles.every(function(img) { return img.complete; });
+
+                if (!tilesReady) {
+                    setTimeout(finishPointLoad, 60);
+                    return;
+                }
+
+                settled = true;
+                removePointLoading(pointLoader);
+            }
+
+            map.once("moveend", function() {
+                requestAnimationFrame(function() {
+                    setTimeout(finishPointLoad, 60);
+                });
+            });
+
             map.setView([sample.lat, sample.lng], Math.max(map.getZoom(), 15), {
                 animate: true
             });
+
+            setTimeout(finishPointLoad, 300);
         }
 
         function query(lat,lng) {
@@ -4019,12 +4099,15 @@ def install_hash_navigation_controller() -> None:
             return null;
         }
 
-        function activateInteractiveMap() {
+        function activateInteractiveMap(focus) {
             const target = findSidebarRadio("Interactive Map");
             if (!target) return false;
+
+            win.__kakamegaNextTransitionLabel =
+                "Loading " + focus.sample + " location";
+
             if (target.input.checked) return true;
 
-            // Reuse the app's existing immediate black transition.
             try {
                 target.label.dispatchEvent(new PointerEvent("pointerdown", {
                     bubbles: true,
@@ -4044,7 +4127,7 @@ def install_hash_navigation_controller() -> None:
         function handleHash() {
             const focus = parseFocusHash();
             if (!focus) return;
-            activateInteractiveMap();
+            activateInteractiveMap(focus);
         }
 
         if (win.__kakamegaFocusHashHandler) {
@@ -4142,6 +4225,11 @@ def install_browser_transition_controller(current_page: str, render_id: int) -> 
         }}
 
         function radioLabel(input) {{
+            if (win.__kakamegaNextTransitionLabel) {{
+                const contextual = win.__kakamegaNextTransitionLabel;
+                win.__kakamegaNextTransitionLabel = null;
+                return contextual;
+            }}
             const label = input.closest('label');
             const value = label ? label.innerText.trim() : (input.value || 'page');
             return 'Loading ' + value.toLowerCase();
