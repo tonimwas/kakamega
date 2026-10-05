@@ -112,6 +112,110 @@ def _encode_png(rgba_image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def add_instant_raster_click(m: folium.Map, rgba_image, bounds) -> None:
+    """Add a browser-only raster identify popup with no Streamlit rerun."""
+    if rgba_image is None or bounds is None:
+        return
+
+    image_url = _encode_png(rgba_image)
+    map_name = m.get_name()
+    south, west = bounds[0]
+    north, east = bounds[1]
+
+    script = f"""
+    (function() {{
+        const map = {map_name};
+        const south = {south};
+        const west = {west};
+        const north = {north};
+        const east = {east};
+        const imageUrl = {json.dumps(image_url)};
+
+        const image = new Image();
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", {{ willReadFrequently: true }});
+        let imageReady = false;
+
+        image.onload = function() {{
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            ctx.drawImage(image, 0, 0);
+            imageReady = true;
+        }};
+        image.src = imageUrl;
+
+        function classifyPixel(r, g, b, a) {{
+            if (a === 0) return null;
+
+            const classes = [
+                {{rgb: [76, 175, 80], code: 1, label: "Clean"}},
+                {{rgb: [255, 235, 59], code: 2, label: "Slightly contaminated"}},
+                {{rgb: [255, 152, 0], code: 3, label: "Moderate"}},
+                {{rgb: [244, 67, 54], code: 4, label: "Heavy contamination"}}
+            ];
+
+            let best = null;
+            let bestDistance = Infinity;
+            for (const item of classes) {{
+                const dr = r - item.rgb[0];
+                const dg = g - item.rgb[1];
+                const db = b - item.rgb[2];
+                const distance = dr * dr + dg * dg + db * db;
+                if (distance < bestDistance) {{
+                    bestDistance = distance;
+                    best = item;
+                }}
+            }}
+            return best;
+        }}
+
+        map.on("click", function(e) {{
+            if (!imageReady) return;
+
+            const lat = e.latlng.lat;
+            const lng = e.latlng.lng;
+
+            if (lat < south || lat > north || lng < west || lng > east) {{
+                return;
+            }}
+
+            const xRatio = (lng - west) / (east - west);
+            const yRatio = (north - lat) / (north - south);
+
+            const x = Math.max(0, Math.min(
+                canvas.width - 1,
+                Math.floor(xRatio * canvas.width)
+            ));
+            const y = Math.max(0, Math.min(
+                canvas.height - 1,
+                Math.floor(yRatio * canvas.height)
+            ));
+
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            const risk = classifyPixel(pixel[0], pixel[1], pixel[2], pixel[3]);
+
+            const popupHtml = risk
+                ? `<div style="font-size:12px;color:black;padding:4px 2px;">
+                       <strong>Contamination: ${risk.label}</strong><br>
+                       <span>Class: ${risk.code}</span><br>
+                       <span>Lat: ${lat.toFixed(5)}, Lon: ${lng.toFixed(5)}</span>
+                   </div>`
+                : `<div style="font-size:12px;color:black;padding:4px 2px;">
+                       <strong>No prediction at this location</strong><br>
+                       <span>Lat: ${lat.toFixed(5)}, Lon: ${lng.toFixed(5)}</span>
+                   </div>`;
+
+            L.popup({{ maxWidth: 300, closeButton: true }})
+                .setLatLng(e.latlng)
+                .setContent(popupHtml)
+                .openOn(map);
+        }});
+    }})();
+    """
+
+    m.get_root().script.add_child(folium.Element(script))
+
+
 def persist_upload(uploaded_file, dest: Path) -> str:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(uploaded_file.getbuffer())
@@ -443,16 +547,21 @@ def page_interactive_map(uploaded_file):
         st.session_state.center_to_raster = False
 
     m = create_base_map(center_lat, center_lon, zoom=zoom_level)
-    overlay, metadata, bounds = add_raster_overlay(
-        m,
-        raster_path,
-        opacity,
-        layer_name=f"{medium} contamination risk",
-    )
-    if overlay is None:
+    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
+    if rgba_image is None or bounds is None:
         st.error(f"Failed to load raster overlay: {metadata.get('error', 'Unknown error')}")
         return
 
+    overlay = ImageOverlay(
+        image=_encode_png(rgba_image),
+        bounds=bounds,
+        opacity=opacity,
+        name=f"{medium} contamination risk",
+        interactive=False,
+        cross_origin=False,
+        zindex=1,
+    )
+    overlay.add_to(m)
     # Always fit to raster bounds on initial load or when centering
     if center_button or 'map_loaded' not in st.session_state:
         m.fit_bounds(bounds)
@@ -461,37 +570,18 @@ def page_interactive_map(uploaded_file):
     add_map_legend(m)
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
 
-    # Add marker if there was a previous click
-    if 'last_click' in st.session_state:
-        click_data = st.session_state['last_click']
-        if click_data.get('medium') == medium:
-            render_click_marker(m, click_data, raster_path, medium)
+    # Handle raster identification entirely in the browser for instant popups.
+    add_instant_raster_click(m, rgba_image, bounds)
 
     st.markdown('<div class="map-shell">', unsafe_allow_html=True)
-    map_data = st_folium(
+    st_folium(
         m,
         width="stretch",
         height=600,
-        returned_objects=["last_clicked", "zoom"],
+        returned_objects=[],
         key=f"kakamega-map-{medium}",
     )
     st.markdown("</div>", unsafe_allow_html=True)
-
-    # Store zoom level in session state
-    if map_data and "zoom" in map_data:
-        st.session_state.map_zoom = map_data["zoom"]
-
-    # Handle click - store in session state to trigger marker on next render
-    clicked = map_data.get("last_clicked") if map_data else None
-    if clicked:
-        st.session_state['last_click'] = clicked
-        st.session_state['last_click']['medium'] = medium
-        st.rerun()
-    else:
-        # Clear click if user clicked elsewhere or changed medium
-        if 'last_click' in st.session_state:
-            if st.session_state['last_click'].get('medium') != medium:
-                del st.session_state['last_click']
 
 
 def page_check_location(uploaded_file):
