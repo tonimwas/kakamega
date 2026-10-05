@@ -771,7 +771,7 @@ def add_sample_point_layer(m: folium.Map, medium: str):
                 fill_opacity=0.95,
                 popup=folium.Popup(popup, max_width=320),
                 tooltip=folium.Tooltip(
-                    sample_id,
+                    f"{sample_id} · {category}",
                     sticky=False,
                     direction="top",
                     opacity=0.92,
@@ -2022,6 +2022,7 @@ def page_interactive_map(uploaded_file, medium: str):
 def sample_query_records(medium: str) -> list[dict]:
     """Compact sample data used by the browser-side location query."""
     path = SOIL_SAMPLE_POINTS if medium == "Soil" else WATER_SAMPLE_POINTS
+    class_field = "Overall_cl" if medium == "Soil" else "Safety_cla"
     gdf = load_sample_points(str(path))
     records = []
     if gdf.empty:
@@ -2037,6 +2038,7 @@ def sample_query_records(medium: str) -> list[dict]:
             "lat": float(geom.y),
             "lng": float(geom.x),
             "metals": sample_dominant_metals(sid, medium),
+            "risk_class": str(row.get(class_field, "")),
         })
     return records
 
@@ -2061,6 +2063,7 @@ def add_focused_sample_marker(m: folium.Map, sample: dict, medium: str) -> None:
         const lat = __LAT__;
         const lng = __LNG__;
         const sampleId = __SAMPLE_ID__;
+        const riskClass = __RISK_CLASS__;
 
         const style = document.createElement("style");
         style.textContent =
@@ -2082,18 +2085,47 @@ def add_focused_sample_marker(m: folium.Map, sample: dict, medium: str) -> None:
             iconAnchor: [8,8]
         });
 
-        L.marker([lat,lng], {
+        const focusedMarker = L.marker([lat,lng], {
             icon: icon,
             interactive: true,
             keyboard: false,
             zIndexOffset: 1800
         })
-        .bindTooltip(sampleId, {
+        .bindTooltip(sampleId + ' · ' + riskClass, {
             permanent: false,
             direction: 'top',
             opacity: .95
         })
         .addTo(map);
+
+        const ClearFocusedControl = L.Control.extend({
+            options: {position: 'topleft'},
+            onAdd: function() {
+                const wrap = L.DomUtil.create('div', 'leaflet-bar');
+                const btn = L.DomUtil.create('a', '', wrap);
+                btn.href = '#';
+                btn.title = 'Clear highlighted sample';
+                btn.innerHTML = 'Clear view';
+                btn.style.width = 'auto';
+                btn.style.minWidth = '72px';
+                btn.style.padding = '0 8px';
+                btn.style.fontSize = '11px';
+                btn.style.fontWeight = '700';
+                btn.style.lineHeight = '28px';
+                btn.style.height = '28px';
+                btn.style.background = 'rgba(255,255,255,.94)';
+                btn.style.color = '#222';
+                L.DomEvent.disableClickPropagation(wrap);
+                L.DomEvent.on(btn, 'click', function(e) {
+                    L.DomEvent.preventDefault(e);
+                    if (map.hasLayer(focusedMarker)) map.removeLayer(focusedMarker);
+                    map.removeControl(clearControl);
+                });
+                return wrap;
+            }
+        });
+        const clearControl = new ClearFocusedControl();
+        map.addControl(clearControl);
 
         map.setView([lat,lng], Math.max(map.getZoom(), 15), {animate:false});
     })();
@@ -2102,6 +2134,10 @@ def add_focused_sample_marker(m: folium.Map, sample: dict, medium: str) -> None:
     template = template.replace("__LAT__", repr(float(sample["lat"])))
     template = template.replace("__LNG__", repr(float(sample["lng"])))
     template = template.replace("__SAMPLE_ID__", json.dumps(str(sample["id"])))
+    template = template.replace(
+        "__RISK_CLASS__",
+        json.dumps(str(sample.get("risk_class", ""))),
+    )
     marker._template = Template(template)
     m.add_child(marker)
 
@@ -2289,12 +2325,67 @@ def add_fast_location_query(
         applyResponsiveLocationLayout();
         window.addEventListener("resize", applyResponsiveLocationLayout);
 
+        function alignMapWithBrowserTop() {
+            if (window.innerWidth > 768) return;
+            try {
+                const frame = window.frameElement;
+                if (!frame) return;
+                const rect = frame.getBoundingClientRect();
+                window.parent.scrollBy({
+                    top: rect.top,
+                    left: 0,
+                    behavior: "smooth"
+                });
+            } catch (e) {
+                try {
+                    if (window.frameElement) {
+                        window.frameElement.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start"
+                        });
+                    }
+                } catch (_) {}
+            }
+        }
+
         const image = new Image();
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d", {willReadFrequently:true});
         let ready = false;
         let queryMarker = null;
         let nearestSampleMarker = null;
+
+        const ClearViewControl = L.Control.extend({
+            options: {position: "topleft"},
+            onAdd: function() {
+                const wrap = L.DomUtil.create("div", "leaflet-bar");
+                const btn = L.DomUtil.create("a", "", wrap);
+                btn.href = "#";
+                btn.title = "Clear temporary markers";
+                btn.innerHTML = "Clear view";
+                btn.style.width = "auto";
+                btn.style.minWidth = "72px";
+                btn.style.padding = "0 8px";
+                btn.style.fontSize = "11px";
+                btn.style.fontWeight = "700";
+                btn.style.lineHeight = "28px";
+                btn.style.height = "28px";
+                btn.style.background = "rgba(255,255,255,.94)";
+                btn.style.color = "#222";
+                L.DomEvent.disableClickPropagation(wrap);
+                L.DomEvent.on(btn, "click", function(e) {
+                    L.DomEvent.preventDefault(e);
+                    if (queryMarker && map.hasLayer(queryMarker)) map.removeLayer(queryMarker);
+                    if (nearestSampleMarker && map.hasLayer(nearestSampleMarker)) {
+                        map.removeLayer(nearestSampleMarker);
+                    }
+                    queryMarker = null;
+                    nearestSampleMarker = null;
+                });
+                return wrap;
+            }
+        });
+        map.addControl(new ClearViewControl());
 
         const markerStyle = document.createElement("style");
         markerStyle.textContent =
@@ -2420,12 +2511,17 @@ def add_fast_location_query(
                     [lat, lng],
                     {
                         icon: icon,
-                        interactive: false,
+                        interactive: true,
                         keyboard: false,
                         zIndexOffset: 1200
                     }
                 ).addTo(map);
             }
+            queryMarker.unbindTooltip();
+            queryMarker.bindTooltip(
+                (medium === "Water" ? "Water safety: " : "Contamination: ") + status.label,
+                {direction: "top", opacity: .95}
+            );
         }
 
         function showNearestSample(sample) {
@@ -2454,10 +2550,13 @@ def add_fast_location_query(
             }
 
             nearestSampleMarker.unbindTooltip();
-            nearestSampleMarker.bindTooltip(sample.id, {
-                direction: 'top',
-                opacity: .95
-            });
+            nearestSampleMarker.bindTooltip(
+                sample.id + ' · ' + (sample.risk_class || ''),
+                {
+                    direction: 'top',
+                    opacity: .95
+                }
+            );
             map.setView([sample.lat, sample.lng], Math.max(map.getZoom(), 15), {
                 animate: true
             });
@@ -2505,7 +2604,10 @@ def add_fast_location_query(
 
         }
 
-        map.on("click", function(e) { query(e.latlng.lat,e.latlng.lng); });
+        map.on("click", function(e) {
+            alignMapWithBrowserTop();
+            query(e.latlng.lat,e.latlng.lng);
+        });
 
         panel.addEventListener("click", function(event) {
             const link = event.target.closest(".nearest-sample-link");
@@ -2521,6 +2623,7 @@ def add_fast_location_query(
         });
 
         document.getElementById("query-btn").addEventListener("click", function() {
+            alignMapWithBrowserTop();
             const lat=parseFloat(document.getElementById("query-lat").value);
             const lng=parseFloat(document.getElementById("query-lng").value);
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -2569,7 +2672,7 @@ def add_fast_location_query(
 
 
 def page_check_location(uploaded_file, medium: str):
-    st.header("Check My Location")
+    medium_page_heading("Check My Location", medium)
     st.write(
         "Click the map or enter latitude and longitude in the panel to see the predicted contamination risk "
         "before farming, drawing water or managing mine waste."
@@ -2735,8 +2838,35 @@ def _rename_and_order_sample_table(df: pd.DataFrame, medium: str) -> pd.DataFram
     return df
 
 
+def medium_page_heading(title: str, medium: str) -> None:
+    """Compact page heading with the currently displayed risk medium inline."""
+    label = "Soil contamination" if medium == "Soil" else "Water safety"
+    badge_bg = "#2a362b" if medium == "Soil" else "#352629"
+    badge_border = "#4CAF50" if medium == "Soil" else "#F44336"
+    st.markdown(
+        f"""
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 .45rem 0;">
+            <h2 style="margin:0;padding:0;font-size:2rem;line-height:1.2;">{title}</h2>
+            <span style="
+                display:inline-flex;
+                align-items:center;
+                padding:3px 8px;
+                border-radius:999px;
+                border:1px solid {badge_border};
+                background:{badge_bg};
+                color:#f4f4f5;
+                font-size:.72rem;
+                font-weight:700;
+                white-space:nowrap;
+            ">{label}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def page_data_explorer(uploaded_file, medium: str):
-    st.header("Data Explorer")
+    medium_page_heading("Data Explorer", medium)
     st.write("This table lists the published data behind the model.")
 
     samples = load_sample_points(
@@ -2894,7 +3024,7 @@ def water_feature_importance_table() -> pd.DataFrame:
 
 
 def page_model_results(medium: str):
-    st.header("Model Results")
+    medium_page_heading("Model Results", medium)
 
     if medium == "Soil":
         st.write(
@@ -3045,7 +3175,7 @@ def page_model_results(medium: str):
 
 
 def page_methodology(medium: str):
-    st.header("Methodology")
+    medium_page_heading("Methodology", medium)
     st.markdown(
         """
         **Data.** Published soil and water heavy metal data (Hg, As, Pb, Cd, Cr, Cu, Zn, Ni) from
@@ -3235,7 +3365,16 @@ def page_statistics(medium: str):
             color: #ffffff;
         }
         </style>
-        <div class="stats-page-title">Key Statistics</div>
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;">
+            <div class="stats-page-title">Key Statistics</div>
+            <span style="
+                display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;
+                border:1px solid {'#4CAF50' if medium == 'Soil' else '#F44336'};
+                background:{'#2a362b' if medium == 'Soil' else '#352629'};
+                color:#f4f4f5;font-size:.72rem;font-weight:700;white-space:nowrap;
+                margin-bottom:.28rem;
+            ">{'Soil contamination' if medium == 'Soil' else 'Water safety'}</span>
+        </div>
         <div class="stats-page-subtitle">
             Summary of the selected dataset, model performance and class distribution.
         </div>
