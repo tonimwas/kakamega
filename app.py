@@ -3944,10 +3944,11 @@ def install_mobile_sidebar_toggle() -> None:
                 "font-size:13px;font-weight:700;cursor:pointer;}" +
                 ".kmm-medium.active{border-color:#ff4b4b;background:#2a2024;}" +
                 "@media(min-width:769px){" +
-                "[data-testid='stSidebarCollapsedControl']{" +
-                "display:none !important;visibility:hidden !important;pointer-events:none !important;}" +
                 "[data-testid='stSidebar'] button[aria-label*='close sidebar' i]," +
+                "[data-testid='stSidebar'] button[aria-label*='collapse sidebar' i]," +
                 "[data-testid='stSidebar'] button[title*='close sidebar' i]," +
+                "[data-testid='stSidebar'] button[title*='collapse sidebar' i]," +
+                "[data-testid='stSidebar'] [data-testid='stSidebarCollapseButton']," +
                 "[data-testid='stSidebar'] [data-testid*='SidebarCollapse']{" +
                 "display:none !important;visibility:hidden !important;pointer-events:none !important;}" +
                 "}" +
@@ -4140,9 +4141,25 @@ def install_mobile_sidebar_toggle() -> None:
 
         function ensureDesktopSidebarExpanded() {
             if (!win.matchMedia("(min-width:769px)").matches) return;
-            if (sidebarIsOpenDesktop() || desktopExpandPending) return;
 
             const control = nativeCollapsedControl();
+
+            if (sidebarIsOpenDesktop()) {
+                if (control && control.style) {
+                    control.style.display = "none";
+                    control.style.visibility = "hidden";
+                    control.style.pointerEvents = "none";
+                }
+                return;
+            }
+
+            if (desktopExpandPending) return;
+
+            if (control && control.style) {
+                control.style.display = "";
+                control.style.visibility = "";
+                control.style.pointerEvents = "";
+            }
             if (!control) return;
 
             const clickable =
@@ -4154,17 +4171,33 @@ def install_mobile_sidebar_toggle() -> None:
 
             desktopExpandPending = true;
             try { clickable.click(); } catch (e) {}
+
             setTimeout(function() {
                 desktopExpandPending = false;
+
                 if (!sidebarIsOpenDesktop()) {
                     const retry = nativeCollapsedControl();
+                    if (retry && retry.style) {
+                        retry.style.display = "";
+                        retry.style.visibility = "";
+                        retry.style.pointerEvents = "";
+                    }
+
                     const retryButton =
                         retry && retry.matches && retry.matches("button")
                             ? retry
                             : retry && retry.querySelector
                                 ? retry.querySelector("button")
                                 : retry;
+
                     try { if (retryButton) retryButton.click(); } catch (e) {}
+                } else {
+                    const stray = nativeCollapsedControl();
+                    if (stray && stray.style) {
+                        stray.style.display = "none";
+                        stray.style.visibility = "hidden";
+                        stray.style.pointerEvents = "none";
+                    }
                 }
             }, 180);
         }
