@@ -60,13 +60,13 @@ WATER_RISK_LABELS = {
 }
 
 WATER_RISK_COLORS = {
-    "safe": "#2196F3",
-    "unsafe": "#FFEB3B",
+    "safe": "#4CAF50",
+    "unsafe": "#F44336",
 }
 
 WATER_RISK_RGBA = {
-    "safe": (33, 150, 243, 255),
-    "unsafe": (255, 235, 59, 255),
+    "safe": (76, 175, 80, 255),
+    "unsafe": (244, 67, 54, 255),
 }
 
 
@@ -274,7 +274,7 @@ def prepare_water_overlay(
                     "top": float(src.bounds.top),
                 },
                 "media": Path(raster_path).stem,
-                "palette": "water_safe_blue_unsafe_yellow_v4",
+                "palette": "water_safe_green_unsafe_red_v5",
                 "tags": dict(src.tags()),
             }
             if src.crs is None:
