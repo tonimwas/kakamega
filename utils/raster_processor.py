@@ -165,8 +165,12 @@ def _wgs84_bounds_from_src(src) -> list:
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def prepare_raster_overlay(raster_path: str, max_dim: int = 800) -> Tuple[Optional[np.ndarray], Optional[list], Dict[str, Any]]:
-    """Reproject (if needed) to EPSG:4326 and return RGBA + Folium bounds."""
+def prepare_raster_overlay(
+    raster_path: str,
+    max_dim: int = 800,
+    medium: Optional[str] = None,
+) -> Tuple[Optional[np.ndarray], Optional[list], Dict[str, Any]]:
+    """Reproject to EPSG:4326 and colorize using the selected map medium."""
     try:
         with rasterio.open(raster_path) as src:
             metadata = {
@@ -181,6 +185,8 @@ def prepare_raster_overlay(raster_path: str, max_dim: int = 800) -> Tuple[Option
                     "top": float(src.bounds.top),
                 },
                 "media": Path(raster_path).stem,
+                "selected_medium": medium,
+                "palette": "water_safe_unsafe_v2" if medium == "Water" else "soil_four_class_v1",
                 "tags": dict(src.tags()),
             }
             if src.crs is None:
@@ -199,7 +205,7 @@ def prepare_raster_overlay(raster_path: str, max_dim: int = 800) -> Tuple[Option
             rgba_image = apply_color_classification(
                 band,
                 nodata,
-                water=_is_water_raster_path(raster_path),
+                water=(medium == "Water") if medium is not None else _is_water_raster_path(raster_path),
             )
             metadata["overlay_width"] = src_width
             metadata["overlay_height"] = src_height
@@ -240,7 +246,7 @@ def prepare_raster_overlay(raster_path: str, max_dim: int = 800) -> Tuple[Option
         rgba_image = apply_color_classification(
             reprojected,
             nodata=np.nan,
-            water=_is_water_raster_path(raster_path),
+            water=(medium == "Water") if medium is not None else _is_water_raster_path(raster_path),
         )
         metadata["overlay_width"] = width
         metadata["overlay_height"] = height
