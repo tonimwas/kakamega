@@ -465,15 +465,24 @@ def create_base_map(center_lat: float, center_lon: float, zoom: int = 10) -> fol
     return m
 
 
-def add_raster_overlay(m: folium.Map, raster_path: str, opacity: float, layer_name: str):
-    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path, medium=medium)
+def add_raster_overlay(
+    m: folium.Map,
+    raster_path: str,
+    opacity: float,
+    layer_name: str,
+    medium: str = "Soil",
+):
+    rgba_image, bounds, metadata = prepare_raster_overlay(
+        raster_path,
+        medium=medium,
+    )
     if rgba_image is None or bounds is None:
         return None, metadata, None
 
     overlay = ImageOverlay(
         image=_encode_png(rgba_image),
         bounds=bounds,
-        opacity=0.7,
+        opacity=opacity,
         name=layer_name,
         interactive=False,
         cross_origin=False,
@@ -629,7 +638,7 @@ def add_map_legend(m: folium.Map, medium: str = "Soil") -> None:
         legend_title = "Contamination risk"
 
     legend = f"""
-    <div style="position:fixed;bottom:46px;right:12px;z-index:999;
+    <div style="position:fixed;bottom:58px;right:12px;z-index:999;
                 background:rgba(255,255,255,0.94);padding:10px 12px;
                 border:1px solid #c4a35a;font-family:Georgia,serif;font-size:12px;
                 color:#152238;min-width:168px;box-shadow:0 2px 8px rgba(21,34,56,0.18);">
