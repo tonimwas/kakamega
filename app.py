@@ -196,13 +196,13 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds) -> None:
 
             const popupHtml = risk
                 ? `<div style="font-size:12px;color:black;padding:4px 2px;">
-                       <strong>Contamination: ${risk.label}</strong><br>
-                       <span>Class: ${risk.code}</span><br>
-                       <span>Lat: ${lat.toFixed(5)}, Lon: ${lng.toFixed(5)}</span>
+                       <strong>Contamination: ${{risk.label}}</strong><br>
+                       <span>Class: ${{risk.code}}</span><br>
+                       <span>Lat: ${{lat.toFixed(5)}}, Lon: ${{lng.toFixed(5)}}</span>
                    </div>`
                 : `<div style="font-size:12px;color:black;padding:4px 2px;">
                        <strong>No prediction at this location</strong><br>
-                       <span>Lat: ${lat.toFixed(5)}, Lon: ${lng.toFixed(5)}</span>
+                       <span>Lat: ${{lat.toFixed(5)}}, Lon: ${{lng.toFixed(5)}}</span>
                    </div>`;
 
             L.popup({{ maxWidth: 300, closeButton: true }})
