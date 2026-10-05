@@ -2714,33 +2714,54 @@ def page_statistics(medium: str):
     st.markdown(
         """
         <style>
-        .stats-title {
-            font-size: 1.45rem;
+        .stats-page-title {
+            font-size: 1.35rem;
             font-weight: 700;
-            margin: 0 0 0.35rem 0;
+            margin: 0 0 0.28rem 0;
+            color: #ffffff;
+        }
+        .stats-page-subtitle {
+            font-size: 0.78rem;
+            color: #aeb2ba;
+            margin: 0 0 0.45rem 0;
         }
         .stats-card {
             background: #171a21;
             border: 1px solid #2d3039;
             border-radius: 6px;
-            padding: 0.38rem 0.42rem;
-            min-height: 54px;
+            padding: 0.34rem 0.4rem;
+            min-height: 50px;
         }
         .stats-card-label {
             color: #aeb2ba;
-            font-size: 0.68rem;
-            font-weight: 600;
-            line-height: 1.05;
+            font-size: 0.64rem;
+            font-weight: 700;
+            line-height: 1.0;
             margin-bottom: 0.12rem;
         }
         .stats-card-value {
             color: #ffffff;
-            font-size: 1.05rem;
+            font-size: 1rem;
             font-weight: 700;
             line-height: 1.05;
         }
+        .balance-box {
+            background: #171a21;
+            border: 1px solid #2d3039;
+            border-radius: 6px;
+            padding: 0.55rem 0.65rem;
+            font-size: 0.76rem;
+            line-height: 1.32;
+            color: #d8dbe2;
+        }
+        .balance-box strong {
+            color: #ffffff;
+        }
         </style>
-        <div class="stats-title">Key Statistics</div>
+        <div class="stats-page-title">Key Statistics</div>
+        <div class="stats-page-subtitle">
+            Summary of the selected dataset, model performance and class distribution.
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -2754,19 +2775,42 @@ def page_statistics(medium: str):
             ("Accuracy", "76.2%"),
             ("Macro F1", "0.57"),
         ]
-        chart_path = SOIL_CLASS_CHART
-        chart_caption = "Soil samples per contamination class"
+        class_counts = pd.DataFrame(
+            {
+                "Class": ["Clean", "Slight", "Moderate", "Heavy"],
+                "Samples": [5, 10, 15, 92],
+            }
+        )
+        dominant_share = 92 / 122 * 100
+        minority_share = 30 / 122 * 100
+        imbalance_text = (
+            f"<strong>Class balance:</strong> Heavy contamination accounts for "
+            f"{dominant_share:.1f}% of the soil samples, while Clean, Slight and Moderate "
+            f"together account for {minority_share:.1f}%. The Heavy-to-Clean count ratio is "
+            f"{92/5:.1f}:1, showing strong class imbalance."
+        )
     else:
         values = [
-            ("Samples", "89"),
+            ("Samples evaluated", "89"),
             ("Metals", "8"),
             ("Classes", "2"),
             ("Model", "Random Forest"),
             ("Accuracy", "79.8%"),
             ("Macro F1", "0.77"),
         ]
-        chart_path = WATER_CLASS_CHART
-        chart_caption = "Water samples per class"
+        class_counts = pd.DataFrame(
+            {
+                "Class": ["Safe", "Unsafe"],
+                "Samples": [62, 27],
+            }
+        )
+        safe_share = 62 / 89 * 100
+        unsafe_share = 27 / 89 * 100
+        imbalance_text = (
+            f"<strong>Class balance:</strong> Safe samples make up {safe_share:.1f}% of the "
+            f"water dataset and Unsafe samples {unsafe_share:.1f}%. The Safe-to-Unsafe count "
+            f"ratio is {62/27:.2f}:1, so the water dataset is more balanced than the soil dataset."
+        )
 
     cols = st.columns(6, gap="small")
     for col, (label, value) in zip(cols, values):
@@ -2781,14 +2825,22 @@ def page_statistics(medium: str):
                 unsafe_allow_html=True,
             )
 
-    if chart_path.exists():
-        left, center, right = st.columns([1, 1.35, 1])
-        with center:
-            st.image(
-                str(chart_path),
-                width=390,
-                caption=chart_caption,
-            )
+    chart_col, insight_col = st.columns([1.55, 1], gap="small")
+
+    with chart_col:
+        st.caption("Samples per class")
+        st.bar_chart(
+            class_counts.set_index("Class"),
+            height=235,
+            use_container_width=True,
+        )
+
+    with insight_col:
+        st.caption("Distribution insight")
+        st.markdown(
+            f'<div class="balance-box">{imbalance_text}</div>',
+            unsafe_allow_html=True,
+        )
 
 def page_disclaimer():
     st.header("Disclaimer")
@@ -3080,7 +3132,8 @@ def main():
         st.markdown("---")
         st.markdown(get_sidebar_footer_html(), unsafe_allow_html=True)
 
-    render_project_header()
+    if page != "Key Statistics":
+        render_project_header()
 
     if page == "Interactive Map":
         page_interactive_map(uploaded, medium)
