@@ -1,4 +1,5 @@
 import base64
+import gzip
 import io
 import json
 import struct
@@ -6,6 +7,7 @@ from pathlib import Path
 
 import folium
 import geopandas as gpd
+import pandas as pd
 from branca.element import MacroElement, Template
 import streamlit as st
 from folium.plugins import Fullscreen, LocateControl, MousePosition
@@ -39,6 +41,10 @@ COUNTY_GEOJSON = VECTOR_DIR / "KakamegaCounty.geojson"
 SAMPLE_POINTS_DIR = VECTOR_DIR / "SamplePoints"
 SOIL_SAMPLE_POINTS = SAMPLE_POINTS_DIR / "Training_data_Soil.shp"
 WATER_SAMPLE_POINTS = SAMPLE_POINTS_DIR / "Training_data_Water.shp"
+TABLE_DIR = ROOT / "data" / "tables"
+SOIL_METALS_TABLE = TABLE_DIR / "dominant_metals_soil.csv.gz.b64"
+WATER_METALS_TABLE = TABLE_DIR / "dominant_metals_water.csv.gz.b64"
+METAL_LIMITS_TABLE = TABLE_DIR / "metal_limits.csv.gz.b64"
 
 st.set_page_config(
     page_title="Kakamega Heavy Metal Risk Assessment",
@@ -108,41 +114,41 @@ st.markdown("""
     .leaflet-top.leaflet-right .leaflet-control-layers {
         margin-top: 48px !important;
         margin-right: 10px !important;
-        min-width: 132px !important;
-        max-width: 165px !important;
-        max-height: 190px !important;
+        min-width: 118px !important;
+        max-width: 150px !important;
+        max-height: 180px !important;
         overflow-y: auto !important;
-        padding: 4px 6px !important;
-        background: rgba(255,255,255,0.50) !important;
-        border: 1px solid rgba(255,255,255,0.45) !important;
-        border-radius: 5px !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.20) !important;
+        padding: 3px 5px !important;
+        background: rgba(55,55,55,0.50) !important;
+        border: 1px solid rgba(255,255,255,0.25) !important;
+        border-radius: 4px !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.22) !important;
         backdrop-filter: blur(1px);
     }
 
     .leaflet-control-layers-expanded {
-        padding: 4px 6px !important;
+        padding: 3px 5px !important;
     }
 
     .leaflet-control-layers label {
-        margin: 1px 0 !important;
-        line-height: 1.12 !important;
-        font-size: 10px !important;
+        margin: 0 !important;
+        line-height: 1.05 !important;
+        font-size: 9px !important;
         font-weight: 700 !important;
-        color: #111 !important;
+        color: #fff !important;
         white-space: nowrap !important;
     }
 
     .leaflet-control-layers-selector {
-        width: 11px !important;
-        height: 11px !important;
+        width: 10px !important;
+        height: 10px !important;
         margin: 0 3px 0 0 !important;
         vertical-align: middle !important;
     }
 
     .leaflet-control-layers-separator {
-        margin: 3px 0 !important;
-        border-top: 1px solid rgba(0,0,0,0.28) !important;
+        margin: 2px 0 !important;
+        border-top: 1px solid rgba(255,255,255,0.25) !important;
     }
 
     .leaflet-control-layers-list {
@@ -428,8 +434,8 @@ def add_vector_layers(m: folium.Map) -> None:
                 str(WARDS_GEOJSON),
                 style_function=lambda x: {
                     'fillColor': 'transparent',
-                    'color': '#808080',
-                    'weight': 0.5,
+                    'color': '#111111',
+                    'weight': 0.25,
                     'fillOpacity': 0.0,
                 },
             ).add_to(wards_layer)
@@ -1448,26 +1454,208 @@ def page_check_location(uploaded_file):
     st_folium(m, width="stretch", height=650, returned_objects=[])
 
 
+@st.cache_data(show_spinner=False)
+def load_compressed_csv(path_string: str) -> pd.DataFrame:
+    """Load a gzip-compressed CSV stored as base64 text in the repository."""
+    path = Path(path_string)
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        encoded = path.read_text(encoding="utf-8").strip()
+        raw = gzip.decompress(base64.b64decode(encoded))
+        return pd.read_csv(io.BytesIO(raw))
+    except Exception:
+        return pd.DataFrame()
+
+
+def _rename_and_order_sample_table(df: pd.DataFrame, medium: str) -> pd.DataFrame:
+    """Use clear display names and remove duplicate or truncated GIS fields."""
+    if df.empty:
+        return df
+
+    df = df.drop(columns="geometry", errors="ignore").copy()
+
+    if medium == "Soil":
+        rename_map = {
+            "LATITUDE": "Latitude",
+            "Longitude": "Longitude",
+            "Elevation_": "Elevation (m)",
+            "Land_use": "Land use",
+            "Soil_type": "Soil type",
+            "Clay_perce": "Clay (%)",
+            "SOC_percen": "SOC (%)",
+            "Soil_pH": "Soil pH",
+            "Avg_3moths": "Avg 3-month rainfall before data collection (mm)",
+            "Avg_3month": "Avg 3-month temperature before data collection (°C)",
+            "Distance_f": "Distance from closest road (m)",
+            "Distance_1": "Distance from closest mine (m)",
+            "Distance_2": "Distance from closest stream (m)",
+            "Distance f": "Distance from closest waste disposal (m)",
+            "Distance_u": "Distance from closest upstream mine (m)",
+            "Distance_3": "Distance from closest upstream waste disposal (m)",
+            "Overall_cl": "Overall class",
+        }
+        preferred = [
+            "ID", "Latitude", "Longitude", "Elevation (m)", "Land use", "Soil type",
+            "Clay (%)", "SOC (%)", "Soil pH",
+            "Avg 3-month rainfall before data collection (mm)",
+            "Avg 3-month temperature before data collection (°C)",
+            "Distance from closest road (m)",
+            "Distance from closest mine (m)",
+            "Distance from closest stream (m)",
+            "Distance from closest waste disposal (m)",
+            "Distance from closest upstream mine (m)",
+            "Distance from closest upstream waste disposal (m)",
+            "Overall class",
+        ]
+    else:
+        rename_map = {
+            "Latitude": "Latitude",
+            "Longitude": "Longitude",
+            "Elevation_": "Elevation (m)",
+            "Land_use": "Land use",
+            "Water_type": "Water type",
+            "Avg_3month": "Avg 3-month temperature before data collection (°C)",
+            "Avg_3mon_1": "Avg 3-month rainfall before data collection (mm)",
+            "Distance_f": "Distance from closest waste disposal (m)",
+            "Distance_1": "Distance from closest mine (m)",
+            "Distance_2": "Distance from closest upstream waste disposal (m)",
+            "Distance_3": "Distance from closest upstream mine (m)",
+            "Safety_cla": "Safety class",
+        }
+        df = df.drop(columns=["value"], errors="ignore")
+        preferred = [
+            "ID", "Latitude", "Longitude", "Elevation (m)", "Land use", "Water type",
+            "Avg 3-month temperature before data collection (°C)",
+            "Avg 3-month rainfall before data collection (mm)",
+            "Distance from closest waste disposal (m)",
+            "Distance from closest mine (m)",
+            "Distance from closest upstream waste disposal (m)",
+            "Distance from closest upstream mine (m)",
+            "Safety class",
+        ]
+
+    df = df.rename(columns=rename_map)
+    df = df[[col for col in preferred if col in df.columns]].copy()
+
+    numeric_cols = df.select_dtypes(include="number").columns
+    df[numeric_cols] = df[numeric_cols].round(3)
+    return df
+
+
 def page_data_explorer(uploaded_file):
     st.markdown('<div class="page-copy" style="padding: 0.3rem 0;">', unsafe_allow_html=True)
     st.header("Data explorer")
-    st.write("Metadata for the active soil or water prediction raster.")
+    st.write("Explore sample observations, metal results and raster metadata.")
     st.markdown("</div>", unsafe_allow_html=True)
 
+    st.subheader("Sample points")
+    soil_tab, water_tab = st.tabs(["Soil samples", "Water samples"])
+
+    with soil_tab:
+        soil_samples = load_sample_points(str(SOIL_SAMPLE_POINTS))
+        soil_table = _rename_and_order_sample_table(soil_samples, "Soil")
+        if soil_table.empty:
+            st.info("No soil sample points are available.")
+        else:
+            st.caption(f"{len(soil_table)} soil sample records")
+            st.dataframe(soil_table, use_container_width=True, hide_index=True, height=430)
+
+    with water_tab:
+        water_samples = load_sample_points(str(WATER_SAMPLE_POINTS))
+        water_table = _rename_and_order_sample_table(water_samples, "Water")
+        if water_table.empty:
+            st.info("No water sample points are available.")
+        else:
+            st.caption(f"{len(water_table)} water sample records")
+            st.dataframe(water_table, use_container_width=True, hide_index=True, height=430)
+
+    st.markdown("---")
+    st.subheader("Heavy metal results")
+    soil_metals, water_metals, limits_tab = st.tabs(
+        ["Soil metal results", "Water metal results", "Reference limits"]
+    )
+
+    with soil_metals:
+        table = load_compressed_csv(str(SOIL_METALS_TABLE))
+        if table.empty:
+            st.info("Soil metal results are not available.")
+        else:
+            table = table.rename(columns={
+                "Hg_mg_kg": "Hg (mg/kg)",
+                "As_mg_kg": "As (mg/kg)",
+                "Pb_mg_kg": "Pb (mg/kg)",
+                "Cd_mg_kg": "Cd (mg/kg)",
+                "Cr_mg_kg": "Cr (mg/kg)",
+                "Cu_mg_kg": "Cu (mg/kg)",
+                "Zn_mg_kg": "Zn (mg/kg)",
+                "Ni_mg_kg": "Ni (mg/kg)",
+                "N_Exceedances": "No. of exceedances",
+                "Overall_class": "Overall class",
+                "Dominant_Metal": "Dominant metal",
+                "Nemerow_PI": "Nemerow PI",
+            })
+            numeric_cols = table.select_dtypes(include="number").columns
+            table[numeric_cols] = table[numeric_cols].round(4)
+            st.caption("Metal concentrations and summary indices. Coordinates are omitted because they are already shown above.")
+            st.dataframe(table, use_container_width=True, hide_index=True, height=430)
+
+    with water_metals:
+        table = load_compressed_csv(str(WATER_METALS_TABLE))
+        if table.empty:
+            st.info("Water metal results are not available.")
+        else:
+            table = table.rename(columns={
+                "Hg_mg_L": "Hg (mg/L)",
+                "As_mg_L": "As (mg/L)",
+                "Pb_mg_L": "Pb (mg/L)",
+                "Cd_mg_L": "Cd (mg/L)",
+                "Cr_mg_L": "Cr (mg/L)",
+                "Cu_mg_L": "Cu (mg/L)",
+                "Zn_mg_L": "Zn (mg/L)",
+                "Ni_mg_L": "Ni (mg/L)",
+                "N_Exceedances": "No. of exceedances",
+                "Overall_class": "Overall class",
+                "Dominant_Metal": "Dominant metal",
+                "Nemerow_PI": "Nemerow PI",
+                "Safety_class": "Safety class",
+            })
+            numeric_cols = table.select_dtypes(include="number").columns
+            table[numeric_cols] = table[numeric_cols].round(5)
+            st.caption("Metal concentrations and summary indices. Repeated coordinates and sample attributes are omitted.")
+            st.dataframe(table, use_container_width=True, hide_index=True, height=430)
+
+    with limits_tab:
+        table = load_compressed_csv(str(METAL_LIMITS_TABLE))
+        if table.empty:
+            st.info("Reference metal limits are not available.")
+        else:
+            table = table.rename(columns={
+                "Soil_limit_mg_kg": "Soil limit (mg/kg)",
+                "Water_limit_mg_L": "Water guideline (mg/L)",
+            })
+            st.dataframe(table, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("Raster metadata")
     medium = st.radio("Raster", ["Soil", "Water"], horizontal=True)
     raster_path = resolve_raster_path(medium, uploaded_file if medium == "Soil" else None)
     if not raster_path:
         st.warning("Raster data is not available.")
         return
 
-    rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
+    if medium == "Water":
+        rgba_image, bounds, metadata = prepare_water_overlay(raster_path)
+    else:
+        rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
+
     if metadata.get("error"):
         st.error(metadata["error"])
         return
 
     c1, c2 = st.columns(2)
     with c1:
-        st.write(f"**File:** `{Path(raster_path).name}`")
+        st.write(f"**File:** {Path(raster_path).name}")
         st.write(f"**CRS:** {metadata.get('crs', 'N/A')}")
         st.write(f"**Width:** {metadata.get('width', 'N/A')} px")
         st.write(f"**Height:** {metadata.get('height', 'N/A')} px")
@@ -1484,80 +1672,6 @@ def page_data_explorer(uploaded_file):
             st.write("**WGS84 overlay bounds**")
             st.write(f"- South, West: {bounds[0][0]:.5f}, {bounds[0][1]:.5f}")
             st.write(f"- North, East: {bounds[1][0]:.5f}, {bounds[1][1]:.5f}")
-
-    st.markdown("---")
-    st.subheader("Sample points")
-
-    soil_tab, water_tab = st.tabs(["Soil samples", "Water samples"])
-
-    with soil_tab:
-        soil_samples = load_sample_points(str(SOIL_SAMPLE_POINTS))
-        if soil_samples.empty:
-            st.info("No soil sample points are available.")
-        else:
-            soil_table = soil_samples.drop(columns="geometry", errors="ignore").copy()
-            soil_table = soil_table.rename(
-                columns={
-                    "LATITUDE": "Latitude",
-                    "Longitude": "Longitude",
-                    "Elevation_": "Elevation",
-                    "Land_use": "Land use",
-                    "Soil_type": "Soil type",
-                    "Clay_perce": "Clay (%)",
-                    "SOC_percen": "SOC (%)",
-                    "Soil_pH": "Soil pH",
-                    "Overall_cl": "Contamination class",
-                }
-            )
-            numeric_cols = soil_table.select_dtypes(include="number").columns
-            soil_table[numeric_cols] = soil_table[numeric_cols].round(3)
-            preferred = [
-                "ID", "Latitude", "Longitude", "Elevation", "Land use",
-                "Soil type", "Clay (%)", "SOC (%)", "Soil pH",
-                "Contamination class",
-            ]
-            remaining = [col for col in soil_table.columns if col not in preferred]
-            soil_table = soil_table[[col for col in preferred if col in soil_table.columns] + remaining]
-            st.caption(f"{len(soil_table)} soil sample points")
-            st.dataframe(
-                soil_table,
-                use_container_width=True,
-                hide_index=True,
-                height=420,
-            )
-
-    with water_tab:
-        water_samples = load_sample_points(str(WATER_SAMPLE_POINTS))
-        if water_samples.empty:
-            st.info("No water sample points are available.")
-        else:
-            water_table = water_samples.drop(columns="geometry", errors="ignore").copy()
-            water_table = water_table.rename(
-                columns={
-                    "Latitude": "Latitude",
-                    "Longitude": "Longitude",
-                    "Elevation_": "Elevation",
-                    "Land_use": "Land use",
-                    "Water_type": "Water type",
-                    "Safety_cla": "Safety class",
-                    "value": "Class value",
-                }
-            )
-            numeric_cols = water_table.select_dtypes(include="number").columns
-            water_table[numeric_cols] = water_table[numeric_cols].round(3)
-            preferred = [
-                "ID", "Latitude", "Longitude", "Elevation", "Land use",
-                "Water type", "Safety class", "Class value",
-            ]
-            remaining = [col for col in water_table.columns if col not in preferred]
-            water_table = water_table[[col for col in preferred if col in water_table.columns] + remaining]
-            st.caption(f"{len(water_table)} water sample points")
-            st.dataframe(
-                water_table,
-                use_container_width=True,
-                hide_index=True,
-                height=420,
-            )
 
 
 def page_model_results():
