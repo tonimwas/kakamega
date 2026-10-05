@@ -555,8 +555,8 @@ def add_map_controls(
                 panel.style.gap = "7px";
                 panel.style.padding = "4px 7px";
                 panel.style.borderRadius = "8px";
-                panel.style.background = "rgba(20,20,20,0.18)";
-                panel.style.backdropFilter = "blur(2px)";
+                panel.style.background = "transparent";
+                panel.style.backdropFilter = "none";
 
                 const icon = L.DomUtil.create("span", "", panel);
                 icon.innerHTML = "◐";
@@ -781,7 +781,7 @@ def page_interactive_map(uploaded_file):
     overlay = ImageOverlay(
         image=_encode_png(rgba_image),
         bounds=bounds,
-        opacity=opacity,
+        opacity=0.7,
         name=f"{medium} contamination risk",
         interactive=False,
         cross_origin=False,
