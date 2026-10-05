@@ -1641,6 +1641,7 @@ def page_check_location(uploaded_file, medium: str):
         )
         if distance_km > 5.0:
             st.warning("This location is far from any sampled site, so the prediction is less certain.")
+        st.caption("Portal uncertainty rule: a location more than 5 km from the nearest published sample is flagged as less certain.")
 
 
 @st.cache_data(show_spinner=False)
