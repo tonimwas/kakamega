@@ -647,6 +647,7 @@ def class_advice(medium: str, class_label: str) -> str:
     return "No contamination is predicted, the soil is safe to grow food crops."
 
 
+@st.cache_data(show_spinner=False)
 def _metal_table_for_medium(medium: str) -> pd.DataFrame:
     path = SOIL_METALS_TABLE if medium == "Soil" else WATER_METALS_TABLE
     table = load_compressed_csv(str(path))
@@ -656,6 +657,7 @@ def _metal_table_for_medium(medium: str) -> pd.DataFrame:
     return table.loc[valid].copy()
 
 
+@st.cache_data(show_spinner=False)
 def sample_metal_summary_html(sample_id: str, medium: str) -> str:
     table = _metal_table_for_medium(medium)
     if table.empty or "ID" not in table.columns:
@@ -681,6 +683,7 @@ def sample_metal_summary_html(sample_id: str, medium: str) -> str:
     return "<br>".join(parts) if parts else "Not available"
 
 
+@st.cache_data(show_spinner=False)
 def sample_dominant_metals(sample_id: str, medium: str) -> str:
     table = _metal_table_for_medium(medium)
     if table.empty or "ID" not in table.columns or "Dominant_Metal" not in table.columns:
@@ -1961,15 +1964,6 @@ def page_interactive_map(uploaded_file, medium: str):
 
     m.fit_bounds(county_bounds)
 
-    focused_sample_id = st.session_state.pop("_focus_sample_id", None)
-    focused_sample_medium = st.session_state.pop("_focus_sample_medium", None)
-    focused_sample = None
-    if (
-        focused_sample_id
-        and focused_sample_medium == medium
-    ):
-        focused_sample = sample_record_by_id(focused_sample_id, medium)
-
     sample_layer = add_sample_point_layer(m, medium)
 
     add_single_medium_controls(
@@ -1981,9 +1975,6 @@ def page_interactive_map(uploaded_file, medium: str):
         sample_layer,
         medium,
     )
-
-    if focused_sample is not None:
-        add_focused_sample_marker(m, focused_sample, medium)
 
     add_hash_focused_sample(m, medium)
 
