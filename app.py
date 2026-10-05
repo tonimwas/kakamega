@@ -12,6 +12,7 @@ import pandas as pd
 import joblib
 from branca.element import MacroElement, Template
 import streamlit as st
+import streamlit.components.v1 as components
 from folium.plugins import Fullscreen, LocateControl, MousePosition
 from folium.raster_layers import ImageOverlay
 from PIL import Image
@@ -3193,6 +3194,152 @@ def add_map_loading_overlay(
     control._name = "MapLoadingOverlay"
     control._template = Template(template)
     m.add_child(control)
+
+
+def install_browser_transition_controller(current_page: str) -> None:
+    """Show a black transition immediately on sidebar radio clicks."""
+    page_json = json.dumps(current_page)
+    has_map = current_page in {"Interactive Map", "Check My Location", "About the Project"}
+    has_map_json = json.dumps(has_map)
+
+    html = f"""
+    <script>
+    (function() {{
+        const doc = window.parent.document;
+        const win = window.parent;
+        const currentPage = {page_json};
+        const currentPageHasMap = {has_map_json};
+
+        function getMain() {{
+            return doc.querySelector('[data-testid="stMain"]') ||
+                   doc.querySelector('section.main') ||
+                   doc.querySelector('.main') ||
+                   doc.body;
+        }}
+
+        function ensureStyle() {{
+            if (doc.getElementById('kakamega-transition-style')) return;
+            const style = doc.createElement('style');
+            style.id = 'kakamega-transition-style';
+            style.textContent =
+                '@keyframes kakamegaBrowserWave{{0%,60%,100%{{transform:translateY(0);opacity:.42}}30%{{transform:translateY(-8px);opacity:1}}}}' +
+                '#kakamega-page-transition-overlay{{position:fixed;z-index:2147483000;background:#0e1117;display:flex;align-items:center;justify-content:center;pointer-events:auto;overflow:hidden;}}' +
+                '#kakamega-page-transition-overlay .kpt-inner{{display:flex;align-items:center;gap:7px;padding:10px 14px;border-radius:8px;background:rgba(18,21,28,.96);color:#f4f4f5;font-family:Source Sans 3,Segoe UI,sans-serif;font-size:13px;font-weight:700;box-shadow:0 2px 12px rgba(0,0,0,.34);}}' +
+                '#kakamega-page-transition-overlay .kpt-dot{{width:7px;height:7px;border-radius:50%;background:#ff4b4b;animation:kakamegaBrowserWave .9s infinite ease-in-out;}}' +
+                '#kakamega-page-transition-overlay .kpt-dot:nth-child(3){{animation-delay:.14s;}}' +
+                '#kakamega-page-transition-overlay .kpt-dot:nth-child(4){{animation-delay:.28s;}}';
+            doc.head.appendChild(style);
+        }}
+
+        function positionOverlay(overlay) {{
+            const r = getMain().getBoundingClientRect();
+            overlay.style.left = Math.max(0, r.left) + 'px';
+            overlay.style.top = Math.max(0, r.top) + 'px';
+            overlay.style.width = Math.max(0, r.width) + 'px';
+            overlay.style.height = Math.max(0, r.height) + 'px';
+        }}
+
+        function showOverlay(label) {{
+            ensureStyle();
+            let overlay = doc.getElementById('kakamega-page-transition-overlay');
+            if (!overlay) {{
+                overlay = doc.createElement('div');
+                overlay.id = 'kakamega-page-transition-overlay';
+                doc.body.appendChild(overlay);
+            }}
+            overlay.innerHTML =
+                '<div class="kpt-inner"><span>' + label + '</span>' +
+                '<span class="kpt-dot"></span><span class="kpt-dot"></span><span class="kpt-dot"></span></div>';
+            overlay.style.opacity = '1';
+            overlay.style.transition = 'none';
+            positionOverlay(overlay);
+        }}
+
+        function removeOverlay() {{
+            const overlay = doc.getElementById('kakamega-page-transition-overlay');
+            if (!overlay) return;
+            overlay.style.transition = 'opacity 160ms ease';
+            overlay.style.opacity = '0';
+            setTimeout(function() {{
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            }}, 170);
+        }}
+
+        function findRadio(target) {{
+            if (!target || !target.closest) return null;
+            if (!target.closest('[data-testid="stSidebar"]')) return null;
+            if (target.matches && target.matches('input[type="radio"]')) return target;
+            const label = target.closest('label');
+            if (label) {{
+                const input = label.querySelector('input[type="radio"]');
+                if (input) return input;
+            }}
+            return null;
+        }}
+
+        function radioLabel(input) {{
+            const label = input.closest('label');
+            const value = label ? label.innerText.trim() : (input.value || 'page');
+            return 'Loading ' + value.toLowerCase();
+        }}
+
+        if (win.__kakamegaTransitionHandler) {{
+            doc.removeEventListener('pointerdown', win.__kakamegaTransitionHandler, true);
+        }}
+
+        win.__kakamegaTransitionHandler = function(event) {{
+            const input = findRadio(event.target);
+            if (!input || input.checked) return;
+            showOverlay(radioLabel(input));
+        }};
+        doc.addEventListener('pointerdown', win.__kakamegaTransitionHandler, true);
+
+        function markerReady() {{
+            const marker = doc.getElementById('kakamega-page-ready');
+            return !!(marker && marker.dataset.page === currentPage);
+        }}
+
+        function mapReady() {{
+            const main = getMain();
+            const frames = Array.from(main.querySelectorAll('iframe'));
+            let found = false;
+            for (const frame of frames) {{
+                try {{
+                    const fd = frame.contentDocument;
+                    if (!fd) continue;
+                    if (!fd.querySelector('.leaflet-container')) continue;
+                    found = true;
+                    if (fd.querySelector('.kakamega-map-loader')) return false;
+                    const tiles = Array.from(fd.querySelectorAll('img.leaflet-tile'));
+                    if (tiles.length && !tiles.every(img => img.complete)) return false;
+                }} catch (e) {{
+                    found = true;
+                }}
+            }}
+            return found;
+        }}
+
+        const timer = setInterval(function() {{
+            const overlay = doc.getElementById('kakamega-page-transition-overlay');
+            if (!overlay) {{
+                clearInterval(timer);
+                return;
+            }}
+            if (!markerReady()) return;
+            if (currentPageHasMap && !mapReady()) return;
+            clearInterval(timer);
+            setTimeout(removeOverlay, 70);
+        }}, 80);
+
+        win.addEventListener('resize', function() {{
+            const overlay = doc.getElementById('kakamega-page-transition-overlay');
+            if (overlay) positionOverlay(overlay);
+        }});
+    }})();
+    </script>
+    """
+
+    components.html(html, height=0, width=0)
 
 
 def page_loading_placeholder(text: str = "Loading page"):
