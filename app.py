@@ -1804,12 +1804,8 @@ def page_interactive_map(uploaded_file, medium: str):
         st.error(f"{medium} raster data is not available.")
         return
 
-    rgba, bounds, metadata = (
-        prepare_water_overlay(raster_path)
-        if medium == "Water"
-        else prepare_raster_overlay(raster_path)
-    )
-    if rgba is None or bounds is None:
+    image_url, bounds, metadata = prepare_web_overlay(raster_path, medium)
+    if image_url is None or bounds is None:
         st.error(f"Failed to load {medium.lower()} raster: {metadata.get('error', 'Unknown error')}")
         return
 
