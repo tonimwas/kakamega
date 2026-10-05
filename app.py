@@ -3267,7 +3267,7 @@ def page_about():
 
 def page_statistics(medium: str):
     st.markdown(
-        """
+        f"""
         <style>
         .stats-page-title {
             font-size: 1.35rem;
