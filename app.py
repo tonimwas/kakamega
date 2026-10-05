@@ -1202,6 +1202,54 @@ def add_single_medium_controls(
         });
         map.addControl(new OpacityControl());
 
+        function pointInRing(lng, lat, ring) {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const xi = ring[i][0], yi = ring[i][1];
+                const xj = ring[j][0], yj = ring[j][1];
+                const intersects =
+                    ((yi > lat) !== (yj > lat)) &&
+                    (lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+                if (intersects) inside = !inside;
+            }
+            return inside;
+        }
+
+        function pointInPolygon(lng, lat, rings) {
+            if (!rings || !rings.length || !pointInRing(lng, lat, rings[0])) {
+                return false;
+            }
+            for (let i = 1; i < rings.length; i++) {
+                if (pointInRing(lng, lat, rings[i])) return false;
+            }
+            return true;
+        }
+
+        function geometryContains(geometry, lng, lat) {
+            if (!geometry) return false;
+            if (geometry.type === "Polygon") {
+                return pointInPolygon(lng, lat, geometry.coordinates);
+            }
+            if (geometry.type === "MultiPolygon") {
+                return geometry.coordinates.some(
+                    polygon => pointInPolygon(lng, lat, polygon)
+                );
+            }
+            return false;
+        }
+
+        function findAdminName(collection, lng, lat) {
+            if (!collection || !collection.features) return "Unknown";
+            for (const feature of collection.features) {
+                if (geometryContains(feature.geometry, lng, lat)) {
+                    return feature.properties && feature.properties.lookup_name
+                        ? String(feature.properties.lookup_name)
+                        : "Unknown";
+                }
+            }
+            return "Unknown";
+        }
+
         map.on("click", function(e) {
             if (!ready || !rasterBounds.contains(e.latlng)) return;
             const sw = rasterBounds.getSouthWest();
