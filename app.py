@@ -1989,6 +1989,36 @@ def page_model_results(medium: str):
 
         st.caption("Classified against WHO drinking-water guidelines and NEMA guidelines for zinc.")
 
+    with st.expander("Model artifacts reviewed"):
+        if medium == "Soil":
+            artifact_rows = [
+                ["KNN", "K-nearest soil.ipynb", "soil_contamination_knn_model.pkl"],
+                ["Random Forest", "RF soil.ipynb", "soil_contamination_rf_model.pkl"],
+                ["XGBoost (chosen)", "XGBOOST soil.ipynb", "soil_contamination_xgb_model.pkl"],
+                ["Logistic regression", "logistic regression soil.ipynb", "soil_contamination_logreg_model.pkl"],
+                ["Ordinal logistic regression", "ordinal regression soil.ipynb", "soil_contamination_ordinal_logistic.pkl"],
+                ["Feature importance", "feature importances soil.ipynb", "—"],
+                ["Target encoder", "—", "target_encoder.pkl"],
+            ]
+        else:
+            artifact_rows = [
+                ["KNN", "K-nearest water.ipynb", "water_contamination_knn_model.pkl"],
+                ["Random Forest (chosen)", "RF water.ipynb", "water_contamination_rf_model.pkl"],
+                ["XGBoost", "XGBOOST water.ipynb", "water_contamination_xgb_model.pkl"],
+                ["Logistic regression", "logistic regression water.ipynb", "water_contamination_logreg_model.pkl"],
+                ["Feature importance", "feature importances water.ipynb", "water_contamination_features.pkl"],
+            ]
+        artifacts = pd.DataFrame(artifact_rows, columns=["Purpose", "Notebook", "Saved artifact"])
+        artifacts["Available"] = artifacts.apply(
+            lambda row: "Yes" if (
+                (row["Notebook"] == "—" or (ADDITIONAL_DIR / row["Notebook"]).exists())
+                and (row["Saved artifact"] == "—" or (ADDITIONAL_DIR / row["Saved artifact"]).exists())
+            ) else "Missing",
+            axis=1,
+        )
+        st.dataframe(artifacts, use_container_width=True, hide_index=True)
+
+
 def page_methodology(medium: str):
     st.header("Methodology")
     st.markdown(
