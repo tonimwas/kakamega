@@ -482,11 +482,11 @@ def add_raster_overlay(m: folium.Map, raster_path: str, opacity: float, layer_na
 
 def add_map_legend(m: folium.Map) -> None:
     legend = """
-    <div style="position:fixed;bottom:28px;right:12px;z-index:999;
+    <div style="position:fixed;bottom:28px;left:12px;z-index:999;
                 background:rgba(255,255,255,0.94);padding:10px 12px;
                 border:1px solid #c4a35a;font-family:Georgia,serif;font-size:12px;
                 color:#152238;min-width:168px;box-shadow:0 2px 8px rgba(21,34,56,0.18);">
-      <div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">Risk classification</div>
+      <div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #c4a35a;padding-bottom:4px;">Contamination risk</div>
       <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border:1px solid #333;margin-right:6px;"></span>Clean</div>
       <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #333;margin-right:6px;"></span>Slightly contaminated</div>
       <div style="margin:4px 0;"><span style="display:inline-block;width:12px;height:12px;background:#FF9800;border:1px solid #333;margin-right:6px;"></span>Moderate</div>
@@ -834,9 +834,9 @@ def main():
 
     with st.sidebar:
         if LOGO_PATH.exists():
-            left, mid, right = st.columns([1, 2, 1])
+            left, mid, right = st.columns([0.05, 0.9, 0.05])
             with mid:
-                st.image(str(LOGO_PATH), width=96)
+                st.image(str(LOGO_PATH), width=260)
         st.markdown(
             """
             <div class="brand-block">
@@ -846,7 +846,7 @@ def main():
             """,
             unsafe_allow_html=True,
         )
-        st.markdown('<p class="nav-label">Navigation</p>', unsafe_allow_html=True)
+        st.markdown('<p class="nav-label">Navigation Menu</p><p style="font-size:0.82rem;color:#b8bbc4;margin:-0.15rem 0 0.35rem 0;">Go to:</p>', unsafe_allow_html=True)
         page = st.radio(
             "Navigation",
             [
