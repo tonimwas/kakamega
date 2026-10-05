@@ -175,6 +175,7 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds, medium: str) -> 
         const constituencyData = __CONSTITUENCY_DATA__;
         const wardData = __WARD_DATA__;
         const classes = __CLASS_DEFINITIONS__;
+        const statusLabel = __STATUS_LABEL__;
 
         const image = new Image();
         const canvas = document.createElement("canvas");
@@ -287,7 +288,7 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds, medium: str) -> 
 
             const popupHtml = `
                 <div style="color: black; padding: 5px; margin: 0; font-size: 12px;">
-                    <strong style="font-size: 12px; color: black;">Contamination: ${risk.label}</strong><br>
+                    <strong style="font-size: 12px; color: black;">${statusLabel}: ${risk.label}</strong><br>
                     <div style="font-size: 12px;"><strong>County:</strong> ${county}</div>
                     <div style="font-size: 12px;"><strong>Constituency:</strong> ${constituency}</div>
                     <div style="font-size: 12px;"><strong>Ward:</strong> ${ward}</div>
@@ -312,6 +313,7 @@ def add_instant_raster_click(m: folium.Map, rgba_image, bounds, medium: str) -> 
         "__COUNTY_DATA__": json.dumps(county_data, separators=(",", ":")),
         "__CONSTITUENCY_DATA__": json.dumps(constituency_data, separators=(",", ":")),
         "__WARD_DATA__": json.dumps(ward_data, separators=(",", ":")),
+        "__STATUS_LABEL__": json.dumps("Water safety" if medium == "Water" else "Contamination"),
         "__CLASS_DEFINITIONS__": json.dumps(
             [
                 {"rgb": [33, 150, 243], "label": "Safe"},
@@ -753,7 +755,7 @@ def page_interactive_map(uploaded_file):
         """
         <div class="hero" style="padding: 0.3rem 0;">
             <h1 style="font-size: 1.3rem; margin: 0.2rem 0;">Predicting heavy metal contamination around artisanal gold mines in Kakamega County</h1>
-            <p style="font-size: 0.85rem; margin: 0;">An interactive machine learning map showing predicted soil and water contamination risk across Kakamega County, Kenya.</p>
+            <p style="font-size: 0.85rem; margin: 0;">An interactive machine learning map showing predicted soil contamination and water safety across Kakamega County, Kenya.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -786,7 +788,7 @@ def page_interactive_map(uploaded_file):
         image=_encode_png(rgba_image),
         bounds=bounds,
         opacity=0.7,
-        name=f"{medium} contamination risk",
+        name=("Water safety" if medium == "Water" else "Soil contamination risk"),
         interactive=False,
         cross_origin=False,
         zindex=1,
