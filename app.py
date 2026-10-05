@@ -101,6 +101,9 @@ st.markdown("""
         margin-top: 0.1rem !important;
         margin-bottom: 0.1rem !important;
     }
+    .leaflet-top.leaflet-right .leaflet-control-layers {
+        margin-top: 52px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -369,7 +372,6 @@ def add_vector_layers(m: folium.Map) -> None:
                     'weight': 0.5,
                     'fillOpacity': 0.0,
                 },
-                tooltip=folium.GeoJsonTooltip(fields=['ward'], aliases=['Ward']),
             ).add_to(wards_layer)
             wards_layer.add_to(m)
         except Exception as e:
@@ -382,12 +384,11 @@ def add_vector_layers(m: folium.Map) -> None:
             folium.GeoJson(
                 str(CONSTITUENCIES_GEOJSON),
                 style_function=lambda x: {
-                    'fillColor': '#ff7800',
-                    'color': '#000000',
-                    'weight': 1.5,
-                    'fillOpacity': 0.2,
+                    'fillColor': 'transparent',
+                    'color': '#bfc3c9',
+                    'weight': 0.7,
+                    'fillOpacity': 0.0,
                 },
-                tooltip=folium.GeoJsonTooltip(fields=['ADM2_EN'], aliases=['Constituency']),
             ).add_to(constituencies_layer)
             constituencies_layer.add_to(m)
         except Exception as e:
@@ -470,7 +471,7 @@ def add_raster_overlay(m: folium.Map, raster_path: str, opacity: float, layer_na
     overlay = ImageOverlay(
         image=_encode_png(rgba_image),
         bounds=bounds,
-        opacity=opacity,
+        opacity=0.7,
         name=layer_name,
         interactive=False,
         cross_origin=False,
@@ -478,6 +479,135 @@ def add_raster_overlay(m: folium.Map, raster_path: str, opacity: float, layer_na
     )
     overlay.add_to(m)
     return overlay, metadata, bounds
+
+
+def add_map_controls(
+    m: folium.Map,
+    overlay: ImageOverlay,
+    bounds,
+    initial_opacity: float = 0.7,
+) -> None:
+    """Add browser-only center and opacity controls without Streamlit reruns."""
+    south, west = bounds[0]
+    north, east = bounds[1]
+
+    template = """
+    {% macro script(this, kwargs) %}
+    (function() {
+        const map = {{ this._parent.get_name() }};
+        const overlay = __OVERLAY_NAME__;
+        const rasterBounds = L.latLngBounds(
+            [__SOUTH__, __WEST__],
+            [__NORTH__, __EAST__]
+        );
+
+        const CenterControl = L.Control.extend({
+            options: { position: "topleft" },
+            onAdd: function() {
+                const container = L.DomUtil.create(
+                    "div",
+                    "leaflet-bar kakamega-center-control"
+                );
+                const button = L.DomUtil.create("a", "", container);
+                button.href = "#";
+                button.title = "Center to raster";
+                button.setAttribute("aria-label", "Center to raster");
+                button.innerHTML = "⌖";
+                button.style.fontSize = "22px";
+                button.style.fontWeight = "700";
+                button.style.lineHeight = "30px";
+                button.style.textAlign = "center";
+                button.style.width = "30px";
+                button.style.height = "30px";
+                button.style.color = "#222";
+                button.style.background = "rgba(255,255,255,0.90)";
+
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.on(button, "click", function(e) {
+                    L.DomEvent.preventDefault(e);
+                    map.fitBounds(rasterBounds, {
+                        animate: true,
+                        duration: 0.25,
+                        padding: [8, 8]
+                    });
+                });
+                return container;
+            }
+        });
+        map.addControl(new CenterControl());
+
+        const OpacityControl = L.Control.extend({
+            options: { position: "topright" },
+            onAdd: function() {
+                const container = L.DomUtil.create(
+                    "div",
+                    "kakamega-opacity-control"
+                );
+                container.style.background = "transparent";
+                container.style.border = "none";
+                container.style.boxShadow = "none";
+                container.style.padding = "0";
+                container.style.margin = "8px 10px 0 0";
+
+                const panel = L.DomUtil.create("div", "", container);
+                panel.style.display = "flex";
+                panel.style.alignItems = "center";
+                panel.style.gap = "7px";
+                panel.style.padding = "4px 7px";
+                panel.style.borderRadius = "8px";
+                panel.style.background = "rgba(20,20,20,0.18)";
+                panel.style.backdropFilter = "blur(2px)";
+
+                const icon = L.DomUtil.create("span", "", panel);
+                icon.innerHTML = "◐";
+                icon.title = "Raster transparency";
+                icon.style.color = "#fff";
+                icon.style.fontSize = "17px";
+                icon.style.textShadow = "0 1px 2px rgba(0,0,0,0.65)";
+
+                const slider = L.DomUtil.create("input", "", panel);
+                slider.type = "range";
+                slider.min = "0.10";
+                slider.max = "1.00";
+                slider.step = "0.05";
+                slider.value = "__INITIAL_OPACITY__";
+                slider.title = "Raster transparency";
+                slider.setAttribute("aria-label", "Raster transparency");
+                slider.style.width = "105px";
+                slider.style.margin = "0";
+                slider.style.cursor = "pointer";
+                slider.style.accentColor = "#ffffff";
+
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+
+                slider.addEventListener("input", function() {
+                    overlay.setOpacity(parseFloat(slider.value));
+                });
+
+                return container;
+            }
+        });
+        map.addControl(new OpacityControl());
+    })();
+    {% endmacro %}
+    """
+
+    replacements = {
+        "__OVERLAY_NAME__": overlay.get_name(),
+        "__SOUTH__": repr(float(south)),
+        "__WEST__": repr(float(west)),
+        "__NORTH__": repr(float(north)),
+        "__EAST__": repr(float(east)),
+        "__INITIAL_OPACITY__": f"{float(initial_opacity):.2f}",
+    }
+    for token, value in replacements.items():
+        template = template.replace(token, value)
+
+    controls = MacroElement()
+    controls._name = "RasterMapControls"
+    controls._template = Template(template)
+    m.add_child(controls)
 
 
 def add_map_legend(m: folium.Map) -> None:
@@ -617,18 +747,12 @@ def page_interactive_map(uploaded_file):
         unsafe_allow_html=True,
     )
 
-    ctrl_left, ctrl_mid, ctrl_right = st.columns([1.1, 0.8, 1.6])
-    with ctrl_left:
-        medium = st.radio(
-            "Medium",
-            ["Soil", "Water"],
-            horizontal=True,
-            help="Soil uses the training prediction raster. Water currently uses generated sample classes until the real water raster is provided.",
-        )
-    with ctrl_mid:
-        center_button = st.button("Center to Raster", help="Zoom and center the map to fit the raster extent")
-    with ctrl_right:
-        opacity = st.slider("Raster opacity", min_value=0.1, max_value=1.0, value=0.7, step=0.05)
+    medium = st.radio(
+        "Medium",
+        ["Soil", "Water"],
+        horizontal=True,
+        help="Soil uses the training prediction raster. Water currently uses generated sample classes until the real water raster is provided.",
+    )
 
     raster_path = resolve_raster_path(medium, uploaded_file)
     if raster_path is None:
@@ -648,17 +772,7 @@ def page_interactive_map(uploaded_file):
     except Exception:
         center_lat, center_lon = 0.28, 34.75
 
-    # Check if center button was clicked
-    if center_button:
-        st.session_state.center_to_raster = True
-
-    # Get zoom level from session state if available
-    zoom_level = st.session_state.get("map_zoom", 10)
-    if st.session_state.get("center_to_raster", False):
-        zoom_level = 11  # Zoom in when centering
-        st.session_state.center_to_raster = False
-
-    m = create_base_map(center_lat, center_lon, zoom=zoom_level)
+    m = create_base_map(center_lat, center_lon, zoom=10)
     rgba_image, bounds, metadata = prepare_raster_overlay(raster_path)
     if rgba_image is None or bounds is None:
         st.error(f"Failed to load raster overlay: {metadata.get('error', 'Unknown error')}")
@@ -674,11 +788,10 @@ def page_interactive_map(uploaded_file):
         zindex=1,
     )
     overlay.add_to(m)
-    # Always fit to raster bounds on initial load or when centering
-    if center_button or 'map_loaded' not in st.session_state:
-        m.fit_bounds(bounds)
-        st.session_state.map_loaded = True
+    # Initial map extent. Later centering is handled instantly in Leaflet.
+    m.fit_bounds(bounds)
 
+    add_map_controls(m, overlay, bounds, initial_opacity=0.7)
     add_map_legend(m)
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
 
