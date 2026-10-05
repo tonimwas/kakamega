@@ -3954,9 +3954,7 @@ def install_mobile_sidebar_toggle() -> None:
                 "box-shadow:0 2px 9px rgba(0,0,0,.34);}" +
                 "#kakamega-desktop-sidebar-btn:active{transform:scale(.96);}" +
                 "@media(max-width:768px){#kakamega-mobile-menu-btn{display:flex !important;}}" +
-                "@media(min-width:769px){" +
-                "#kakamega-mobile-menu-btn,#kakamega-mobile-menu-backdrop," +
-                "#kakamega-mobile-menu-drawer{display:none !important;}}" ;
+                "@media(min-width:769px){#kakamega-mobile-menu-btn{display:none !important;}}" ;
         }
 
         function sidebar() {
@@ -4101,6 +4099,7 @@ def install_mobile_sidebar_toggle() -> None:
             drawer.classList.remove("open");
             backdrop.style.display = "none";
             button.setAttribute("aria-expanded", "false");
+            desktopButton.setAttribute("aria-expanded", "false");
         }
 
         button.addEventListener("pointerup", function(event) {
@@ -4139,50 +4138,34 @@ def install_mobile_sidebar_toggle() -> None:
             );
         }
 
-        function nativeSidebarOpenControl() {
-            return (
-                doc.querySelector('[data-testid="stSidebarCollapsedControl"] button') ||
-                doc.querySelector('[data-testid="stSidebarCollapsedControl"]') ||
-                doc.querySelector('[data-testid*="SidebarCollapsed"] button') ||
-                doc.querySelector('[data-testid*="SidebarCollapsed"]') ||
-                Array.from(doc.querySelectorAll("button")).find(function(btn) {
-                    const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
-                    const title = (btn.getAttribute("title") || "").toLowerCase();
-                    return (
-                        aria.includes("open sidebar") ||
-                        aria.includes("expand sidebar") ||
-                        title.includes("open sidebar") ||
-                        title.includes("expand sidebar")
-                    );
-                }) ||
-                null
-            );
-        }
-
         function syncDesktopButton() {
             const desktop = win.matchMedia("(min-width:769px)").matches;
             desktopButton.style.display =
                 (desktop && !sidebarIsOpenDesktop()) ? "flex" : "none";
         }
 
-        desktopButton.addEventListener("click", function(event) {
+        desktopButton.addEventListener("pointerup", function(event) {
             event.preventDefault();
             event.stopPropagation();
 
-            const control = nativeSidebarOpenControl();
-            if (!control) return;
+            // Use our independent navigation drawer directly on desktop.
+            // This avoids depending on Streamlit's hidden collapsed control.
+            syncActive();
+            backdrop.style.display = "block";
+            drawer.classList.add("open");
+            desktopButton.setAttribute("aria-expanded", "true");
+        });
 
-            const clickable =
-                control.matches && control.matches("button")
-                    ? control
-                    : control.querySelector && control.querySelector("button")
-                        ? control.querySelector("button")
-                        : control;
+        backdrop.addEventListener("pointerup", function(event) {
+            event.preventDefault();
+            closeDrawer();
+            desktopButton.setAttribute("aria-expanded", "false");
+        });
 
-            try { clickable.click(); } catch (e) {}
-
-            setTimeout(syncDesktopButton, 80);
-            setTimeout(syncDesktopButton, 220);
+        drawer.querySelectorAll("[data-target]").forEach(function(el) {
+            el.addEventListener("pointerup", function() {
+                desktopButton.setAttribute("aria-expanded", "false");
+            });
         });
 
         if (win.__kakamegaDesktopSidebarObserver) {
