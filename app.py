@@ -3239,6 +3239,137 @@ def add_map_loading_overlay(
     m.add_child(control)
 
 
+def install_mobile_sidebar_toggle() -> None:
+    """Keep a small mobile hamburger visible so a collapsed sidebar can be reopened."""
+    html = """
+    <script>
+    (function() {
+        const doc = window.parent.document;
+        const win = window.parent;
+
+        function ensureStyle() {
+            if (doc.getElementById('kakamega-mobile-menu-style')) return;
+            const style = doc.createElement('style');
+            style.id = 'kakamega-mobile-menu-style';
+            style.textContent =
+                '#kakamega-mobile-menu-btn{' +
+                'position:fixed;left:10px;top:10px;z-index:2147482500;' +
+                'width:36px;height:36px;border:1px solid rgba(255,255,255,.22);' +
+                'border-radius:7px;background:rgba(14,17,23,.88);color:#fff;' +
+                'display:none;align-items:center;justify-content:center;' +
+                'font-size:20px;line-height:1;cursor:pointer;' +
+                'box-shadow:0 2px 8px rgba(0,0,0,.28);backdrop-filter:blur(3px);' +
+                '}' +
+                '@media (max-width: 768px){#kakamega-mobile-menu-btn{display:flex;}}';
+            doc.head.appendChild(style);
+        }
+
+        function sidebar() {
+            return doc.querySelector('[data-testid="stSidebar"]');
+        }
+
+        function sidebarIsOpen() {
+            const sb = sidebar();
+            if (!sb) return false;
+            const r = sb.getBoundingClientRect();
+            const cs = win.getComputedStyle(sb);
+            return (
+                r.width > 80 &&
+                r.right > 0 &&
+                cs.visibility !== 'hidden' &&
+                cs.display !== 'none'
+            );
+        }
+
+        function nativeOpenButton() {
+            const candidates = Array.from(doc.querySelectorAll('button'));
+            return candidates.find(function(btn) {
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                const title = (btn.getAttribute('title') || '').toLowerCase();
+                const text = (btn.innerText || '').trim().toLowerCase();
+                return (
+                    aria.includes('sidebar') ||
+                    title.includes('sidebar') ||
+                    text === '☰'
+                );
+            }) || null;
+        }
+
+        function nativeCloseButton() {
+            const sb = sidebar();
+            if (!sb) return null;
+            const candidates = Array.from(sb.querySelectorAll('button'));
+            return candidates.find(function(btn) {
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                const title = (btn.getAttribute('title') || '').toLowerCase();
+                return (
+                    aria.includes('close') ||
+                    aria.includes('collapse') ||
+                    title.includes('close') ||
+                    title.includes('collapse')
+                );
+            }) || null;
+        }
+
+        ensureStyle();
+
+        let btn = doc.getElementById('kakamega-mobile-menu-btn');
+        if (!btn) {
+            btn = doc.createElement('button');
+            btn.id = 'kakamega-mobile-menu-btn';
+            btn.type = 'button';
+            btn.setAttribute('aria-label', 'Open navigation menu');
+            btn.setAttribute('title', 'Open navigation menu');
+            btn.innerHTML = '&#9776;';
+            doc.body.appendChild(btn);
+        }
+
+        btn.onclick = function() {
+            if (sidebarIsOpen()) return;
+            const openBtn = nativeOpenButton();
+            if (openBtn) {
+                openBtn.click();
+                return;
+            }
+
+            const sb = sidebar();
+            if (sb) {
+                sb.style.transform = 'translateX(0)';
+                sb.style.visibility = 'visible';
+            }
+        };
+
+        function sync() {
+            const mobile = win.matchMedia('(max-width: 768px)').matches;
+            btn.style.display = (mobile && !sidebarIsOpen()) ? 'flex' : 'none';
+        }
+
+        if (win.__kakamegaSidebarObserver) {
+            try { win.__kakamegaSidebarObserver.disconnect(); } catch (e) {}
+        }
+
+        const observer = new MutationObserver(sync);
+        observer.observe(doc.body, {
+            attributes: true,
+            childList: true,
+            subtree: true
+        });
+        win.__kakamegaSidebarObserver = observer;
+
+        if (win.__kakamegaSidebarResize) {
+            win.removeEventListener('resize', win.__kakamegaSidebarResize);
+        }
+        win.__kakamegaSidebarResize = sync;
+        win.addEventListener('resize', sync);
+
+        sync();
+    })();
+    </script>
+    """
+
+    components.html(html, height=0, width=0)
+
+
 def install_browser_transition_controller(current_page: str, render_id: int) -> None:
     """Show a black transition immediately on sidebar radio clicks."""
     page_json = json.dumps(current_page)
@@ -3553,6 +3684,7 @@ def render_project_header() -> None:
 
 def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
+    install_mobile_sidebar_toggle()
 
     with st.sidebar:
         if LOGO_PATH.exists():
