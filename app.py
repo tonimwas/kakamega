@@ -2504,6 +2504,10 @@ def add_fast_location_query(
                     if (nearestSampleMarker && map.hasLayer(nearestSampleMarker)) {
                         map.removeLayer(nearestSampleMarker);
                     }
+                    if (queryMarker) {
+                        queryMarker.unbindTooltip();
+                        queryMarker.unbindPopup();
+                    }
                     queryMarker = null;
                     nearestSampleMarker = null;
                 });
@@ -2652,26 +2656,27 @@ def add_fast_location_query(
                 ).addTo(map);
             }
 
+            // Store the latest classification, but keep the marker silent
+            // until a sample point is also displayed.
+            queryMarker._kakamegaRiskLabel = status.label;
             queryMarker.unbindTooltip();
             queryMarker.unbindPopup();
+        }
 
+        function enableUserPointHover() {
+            if (!queryMarker || !nearestSampleMarker) return;
+
+            queryMarker.unbindTooltip();
             queryMarker.bindTooltip(
                 'User selected point · ' +
                 (medium === "Water" ? "Water safety: " : "Contamination: ") +
-                status.label,
-                {direction: "top", opacity: .95}
+                (queryMarker._kakamegaRiskLabel || ""),
+                {
+                    direction: "top",
+                    opacity: .95,
+                    sticky: false
+                }
             );
-
-            queryMarker.bindPopup(
-                '<div style="font-size:12px;color:#111;">' +
-                '<strong>User selected point</strong><br>' +
-                '<strong>' +
-                (medium === "Water" ? "Water safety: " : "Contamination: ") +
-                '</strong>' + status.label +
-                '</div>',
-                {maxWidth:220}
-            );
-            queryMarker.openPopup();
         }
 
         function showPointLoading(sampleId) {
@@ -2768,6 +2773,11 @@ def add_fast_location_query(
                     opacity: .95
                 }
             );
+
+            // The user-selected point only reveals its label once both
+            // temporary points are visible together.
+            enableUserPointHover();
+
             const pointLoader = showPointLoading(sample.id);
 
             let settled = false;
