@@ -3240,83 +3240,234 @@ def add_map_loading_overlay(
 
 
 def install_mobile_sidebar_toggle() -> None:
-    """Expose Streamlit's native collapsed-sidebar control reliably on mobile."""
+    """Install a self-contained mobile navigation drawer independent of Streamlit's sidebar toggle."""
     html = """
     <script>
     (function() {
         const doc = window.parent.document;
         const win = window.parent;
 
-        const oldCustom = doc.getElementById('kakamega-mobile-menu-btn');
-        if (oldCustom) oldCustom.remove();
+        const pageItems = [
+            "Interactive Map",
+            "Check My Location",
+            "Data Explorer",
+            "Model Results",
+            "Methodology",
+            "About the Project",
+            "Key Statistics",
+            "Disclaimer"
+        ];
 
-        let style = doc.getElementById('kakamega-mobile-menu-style');
-        if (!style) {
-            style = doc.createElement('style');
-            style.id = 'kakamega-mobile-menu-style';
-            doc.head.appendChild(style);
-        }
-
-        style.textContent =
-            '@media (max-width:768px){' +
-            '[data-testid="stSidebarCollapsedControl"],' +
-            '[data-testid*="SidebarCollapsed"]{' +
-            'display:flex !important;' +
-            'visibility:visible !important;' +
-            'opacity:1 !important;' +
-            'position:fixed !important;' +
-            'left:10px !important;' +
-            'top:10px !important;' +
-            'z-index:2147482500 !important;' +
-            'pointer-events:auto !important;' +
-            '}' +
-            '[data-testid="stSidebarCollapsedControl"] button,' +
-            '[data-testid*="SidebarCollapsed"] button{' +
-            'width:36px !important;' +
-            'height:36px !important;' +
-            'min-width:36px !important;' +
-            'min-height:36px !important;' +
-            'padding:0 !important;' +
-            'border-radius:7px !important;' +
-            'border:1px solid rgba(255,255,255,.22) !important;' +
-            'background:rgba(14,17,23,.9) !important;' +
-            'color:#fff !important;' +
-            'box-shadow:0 2px 8px rgba(0,0,0,.28) !important;' +
-            'touch-action:manipulation !important;' +
-            '-webkit-tap-highlight-color:transparent !important;' +
-            'pointer-events:auto !important;' +
-            '}' +
-            '}';
-
-        function makeNativeControlTouchable() {
-            const controls = Array.from(doc.querySelectorAll(
-                '[data-testid="stSidebarCollapsedControl"],[data-testid*="SidebarCollapsed"]'
-            ));
-
-            for (const control of controls) {
-                control.style.pointerEvents = 'auto';
-                const btn = control.querySelector('button');
-                if (btn) {
-                    btn.style.pointerEvents = 'auto';
-                    btn.style.touchAction = 'manipulation';
-                }
+        function ensureStyle() {
+            let style = doc.getElementById("kakamega-mobile-menu-style");
+            if (!style) {
+                style = doc.createElement("style");
+                style.id = "kakamega-mobile-menu-style";
+                doc.head.appendChild(style);
             }
+
+            style.textContent =
+                "#kakamega-mobile-menu-btn{" +
+                "position:fixed;left:12px;top:12px;z-index:2147483100;" +
+                "width:38px;height:38px;border-radius:8px;" +
+                "border:1px solid rgba(255,255,255,.25);" +
+                "background:rgba(14,17,23,.94);color:#fff;" +
+                "display:none;align-items:center;justify-content:center;" +
+                "font-size:22px;line-height:1;cursor:pointer;" +
+                "touch-action:manipulation;-webkit-tap-highlight-color:transparent;" +
+                "box-shadow:0 2px 9px rgba(0,0,0,.34);}" +
+                "#kakamega-mobile-menu-backdrop{" +
+                "position:fixed;inset:0;z-index:2147483000;" +
+                "background:rgba(0,0,0,.50);display:none;}" +
+                "#kakamega-mobile-menu-drawer{" +
+                "position:fixed;left:0;top:0;bottom:0;z-index:2147483050;" +
+                "width:min(82vw,310px);background:#11151b;color:#f4f4f5;" +
+                "border-right:1px solid #343640;box-shadow:5px 0 18px rgba(0,0,0,.38);" +
+                "transform:translateX(-105%);transition:transform .18s ease;" +
+                "padding:16px 12px;box-sizing:border-box;overflow-y:auto;}" +
+                "#kakamega-mobile-menu-drawer.open{transform:translateX(0);}" +
+                ".kmm-title{font-size:16px;font-weight:800;margin:2px 4px 12px;}" +
+                ".kmm-section{font-size:11px;font-weight:800;letter-spacing:.04em;" +
+                "text-transform:uppercase;color:#9da3ae;margin:14px 4px 6px;}" +
+                ".kmm-item{width:100%;display:block;text-align:left;" +
+                "border:0;border-radius:6px;background:transparent;color:#f4f4f5;" +
+                "padding:10px 10px;margin:2px 0;font-size:13px;font-weight:650;" +
+                "cursor:pointer;touch-action:manipulation;}" +
+                ".kmm-item:active,.kmm-item.active{background:#262b34;}" +
+                ".kmm-mediums{display:flex;gap:8px;margin:0 4px;}" +
+                ".kmm-medium{flex:1;text-align:center;border:1px solid #3b404a;" +
+                "border-radius:6px;background:#1a1f27;color:#f4f4f5;padding:9px 4px;" +
+                "font-size:13px;font-weight:700;cursor:pointer;}" +
+                ".kmm-medium.active{border-color:#ff4b4b;background:#2a2024;}" +
+                "@media(max-width:768px){#kakamega-mobile-menu-btn{display:flex !important;}}" +
+                "@media(min-width:769px){" +
+                "#kakamega-mobile-menu-btn,#kakamega-mobile-menu-backdrop," +
+                "#kakamega-mobile-menu-drawer{display:none !important;}}";
         }
 
-        makeNativeControlTouchable();
-
-        if (win.__kakamegaNativeSidebarObserver) {
-            try { win.__kakamegaNativeSidebarObserver.disconnect(); } catch (e) {}
+        function sidebar() {
+            return doc.querySelector('[data-testid="stSidebar"]');
         }
 
-        const observer = new MutationObserver(function() {
-            makeNativeControlTouchable();
+        function radioLabels() {
+            const sb = sidebar();
+            if (!sb) return [];
+            return Array.from(sb.querySelectorAll("label"));
+        }
+
+        function labelText(label) {
+            return (label.innerText || "").replace(/\s+/g, " ").trim();
+        }
+
+        function findRadioLabel(text) {
+            const wanted = text.trim().toLowerCase();
+            const labels = radioLabels();
+
+            for (const label of labels) {
+                const txt = labelText(label).toLowerCase();
+                const input = label.querySelector('input[type="radio"]');
+                if (!input) continue;
+                if (txt === wanted || txt.startsWith(wanted + " ")) return label;
+            }
+            return null;
+        }
+
+        function activateRadio(text) {
+            const label = findRadioLabel(text);
+            if (!label) return false;
+
+            const input = label.querySelector('input[type="radio"]');
+            if (!input) return false;
+            if (input.checked) return true;
+
+            // Trigger the existing immediate black loading transition first.
+            try {
+                label.dispatchEvent(new PointerEvent("pointerdown", {
+                    bubbles: true,
+                    cancelable: true,
+                    pointerType: "touch"
+                }));
+            } catch (e) {}
+
+            try {
+                input.click();
+            } catch (e) {
+                try { label.click(); } catch (_) { return false; }
+            }
+            return true;
+        }
+
+        function currentSelections() {
+            const selected = {page: "", medium: ""};
+            const labels = radioLabels();
+
+            for (const label of labels) {
+                const input = label.querySelector('input[type="radio"]');
+                if (!input || !input.checked) continue;
+                const txt = labelText(label);
+
+                if (pageItems.includes(txt)) selected.page = txt;
+                if (txt === "Soil" || txt === "Water") selected.medium = txt;
+            }
+            return selected;
+        }
+
+        ensureStyle();
+
+        const oldBtn = doc.getElementById("kakamega-mobile-menu-btn");
+        const oldBackdrop = doc.getElementById("kakamega-mobile-menu-backdrop");
+        const oldDrawer = doc.getElementById("kakamega-mobile-menu-drawer");
+        if (oldBtn) oldBtn.remove();
+        if (oldBackdrop) oldBackdrop.remove();
+        if (oldDrawer) oldDrawer.remove();
+
+        const button = doc.createElement("button");
+        button.id = "kakamega-mobile-menu-btn";
+        button.type = "button";
+        button.setAttribute("aria-label", "Open navigation menu");
+        button.setAttribute("title", "Open navigation menu");
+        button.innerHTML = "&#9776;";
+
+        const backdrop = doc.createElement("div");
+        backdrop.id = "kakamega-mobile-menu-backdrop";
+
+        const drawer = doc.createElement("div");
+        drawer.id = "kakamega-mobile-menu-drawer";
+        drawer.setAttribute("role", "dialog");
+        drawer.setAttribute("aria-label", "Navigation menu");
+
+        const pageButtons = pageItems.map(function(item) {
+            return '<button type="button" class="kmm-item" data-target="' +
+                item.replace(/"/g, "&quot;") + '">' + item + '</button>';
+        }).join("");
+
+        drawer.innerHTML =
+            '<div class="kmm-title">Navigation Menu</div>' +
+            '<div class="kmm-section">Pages</div>' +
+            pageButtons +
+            '<div class="kmm-section">Soil / Water</div>' +
+            '<div class="kmm-mediums">' +
+            '<button type="button" class="kmm-medium" data-target="Soil">Soil</button>' +
+            '<button type="button" class="kmm-medium" data-target="Water">Water</button>' +
+            '</div>';
+
+        doc.body.appendChild(backdrop);
+        doc.body.appendChild(drawer);
+        doc.body.appendChild(button);
+
+        function syncActive() {
+            const selected = currentSelections();
+            drawer.querySelectorAll("[data-target]").forEach(function(el) {
+                const target = el.getAttribute("data-target");
+                el.classList.toggle(
+                    "active",
+                    target === selected.page || target === selected.medium
+                );
+            });
+        }
+
+        function openDrawer() {
+            syncActive();
+            backdrop.style.display = "block";
+            drawer.classList.add("open");
+            button.setAttribute("aria-expanded", "true");
+        }
+
+        function closeDrawer() {
+            drawer.classList.remove("open");
+            backdrop.style.display = "none";
+            button.setAttribute("aria-expanded", "false");
+        }
+
+        button.addEventListener("pointerup", function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (drawer.classList.contains("open")) closeDrawer();
+            else openDrawer();
         });
-        observer.observe(doc.body, {
-            childList: true,
-            subtree: true
+
+        backdrop.addEventListener("pointerup", function(event) {
+            event.preventDefault();
+            closeDrawer();
         });
-        win.__kakamegaNativeSidebarObserver = observer;
+
+        drawer.querySelectorAll("[data-target]").forEach(function(el) {
+            el.addEventListener("pointerup", function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                const target = el.getAttribute("data-target");
+                closeDrawer();
+                activateRadio(target);
+            });
+        });
+
+        if (win.__kakamegaMobileMenuResize) {
+            win.removeEventListener("resize", win.__kakamegaMobileMenuResize);
+        }
+        win.__kakamegaMobileMenuResize = function() {
+            if (!win.matchMedia("(max-width:768px)").matches) closeDrawer();
+        };
+        win.addEventListener("resize", win.__kakamegaMobileMenuResize);
     })();
     </script>
     """
